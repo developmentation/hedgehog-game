@@ -6,10 +6,15 @@
  * ============================================================================
  *
  * Add one object literal to `LEVELS` at the bottom of this file. That is the
- * whole job: no other file changes, no new code paths. Play it with
+ * whole job: no other file changes, no new code paths. It appears on the
+ * in-game LEVELS screen (pause -> LEVELS) the moment it is in the array — the
+ * select screen is generated from `LEVELS`, so nothing has to be registered
+ * anywhere. Two debug shortcuts also exist:
  *
  *     ?level=<id>            in the URL
  *     __levels.start('<id>') from the console
+ *
+ * Both ignore `requires`, so a gated level can always be reached for testing.
  *
  * A level is pure data. Everything in it is optional except `id`, `title`,
  * `words` and `goal`; anything you leave out falls back to the global feel
@@ -73,6 +78,10 @@
  * them, but the extra ones are not drawn. Levels that want to be kinder are
  * better off spending it on `setbackCost` or a slower `pacing`.
  *
+ * ------------------------------------------------------------- requires ----
+ *     requires: 'warmup'   locked on the select screen until `warmup` is
+ *                          CLEARED. One level id, never a list.
+ *
  * ---------------------------------------------------------------- theme ----
  * The name of a backdrop set defined in `themes.ts` — `meadow`, `winter` or
  * `cave` today. Starting a `LevelRun` publishes it (see `activeThemeId`) and
@@ -91,6 +100,7 @@
 
 import { clamp, lerp } from '../core/ctx';
 import { WORDS, queryWords, tiersIn, type WordEntry, type WordQuery } from '../data/words';
+import { levelRecord, type Profile } from '../engine/save';
 import { TUNING } from './tuning';
 
 export type { WordQuery };
@@ -138,6 +148,18 @@ export interface LevelDef {
   rules?: LevelRules;
   /** Optional: a backdrop set from `themes.ts`. Degrades to `meadow`. */
   theme?: string;
+  /**
+   * Optional: the id of a level that must be CLEARED before this one opens.
+   *
+   * One level, never a list — a lock a player cannot read at a glance is a lock
+   * they experience as the game being broken. The select screen prints the
+   * requirement verbatim on the locked card (`lockHint`), so the only thing a
+   * gate can ever say is "complete that one".
+   *
+   * `?level=` ignores this. It is a debug shortcut, and a debug shortcut that
+   * respected progression would be useless for testing the thing it gates.
+   */
+  requires?: string;
 }
 
 /**
@@ -415,6 +437,7 @@ export const LEVELS: readonly LevelDef[] = [
     goal: { kind: 'words', target: 3 },
     rules: { setbackCost: 0.05 },
     theme: 'cave',
+    requires: 'warmup',
   },
 
   /**
@@ -431,6 +454,7 @@ export const LEVELS: readonly LevelDef[] = [
     goal: { kind: 'score', target: 2500 },
     rules: { allowJump: false, lives: 2 },
     theme: 'meadow',
+    requires: 'deep-blue',
   },
 ];
 
@@ -449,4 +473,102 @@ export function bootLevel(): LevelDef {
   if (typeof location === 'undefined') return DEFAULT_LEVEL;
   const id = new URLSearchParams(location.search).get('level');
   return (id && getLevel(id)) || DEFAULT_LEVEL;
+}
+
+// ------------------------------------------------------- progression & names
+
+/**
+ * Is this level still locked for this player?
+ *
+ * A level with no `requires` is always open, which includes the endless run and
+ * the two levels a new profile starts on. The check is one level deep by
+ * design: `sprint` requires `deep-blue`, and if `deep-blue` were itself locked
+ * that would be a content bug rather than something to resolve at runtime.
+ */
+export function isLocked(p: Profile, def: LevelDef): boolean {
+  if (!def.requires) return false;
+  return !levelRecord(p, def.requires).cleared;
+}
+
+/** What the locked card says, verbatim. Empty when the level is not gated. */
+export function lockHint(def: LevelDef): string {
+  if (!def.requires) return '';
+  const gate = getLevel(def.requires);
+  return `COMPLETE ${(gate?.title ?? def.requires).toUpperCase()}`;
+}
+
+/** The goal in three words or fewer: `5 WORDS`, `2500 POINTS`, `ENDLESS`. */
+export function goalLabel(def: LevelDef): string {
+  const t = def.goal.target ?? 0;
+  switch (def.goal.kind) {
+    case 'words':
+      return `${t} WORDS`;
+    case 'score':
+      return `${t} POINTS`;
+    case 'streak':
+      return `${t} STREAK`;
+    default:
+      return 'ENDLESS';
+  }
+}
+
+/**
+ * The theme's name in the player's words rather than the renderer's.
+ *
+ * A child choosing "the snowy one" is not looking for `winter`. Unknown ids
+ * fall back to the meadow's label, matching `themeFor`'s own fallback.
+ */
+export function themeLabel(theme: string | undefined): string {
+  switch (theme) {
+    case 'winter':
+      return 'SNOWFIELD';
+    case 'cave':
+      return 'DEEP CAVE';
+    default:
+      return 'SUNSET MEADOW';
+  }
+}
+
+/**
+ * The level to offer as "next" after clearing `id`: the first one after it in
+ * presentation order that this player can actually start. Falls back to the
+ * endless run, which is never locked, so the button always has somewhere to go.
+ */
+export function nextLevelAfter(p: Profile, id: string): LevelDef {
+  const at = LEVELS.findIndex((l) => l.id === id);
+  for (let i = at + 1; i < LEVELS.length; i++) {
+    if (!isLocked(p, LEVELS[i])) return LEVELS[i];
+  }
+  for (let i = 0; i < LEVELS.length; i++) {
+    const l = LEVELS[i];
+    if (l.id !== id && !isLocked(p, l)) return l;
+  }
+  return DEFAULT_LEVEL;
+}
+
+// ------------------------------------------------------------ start requests
+
+/**
+ * "Play this level next", from anywhere.
+ *
+ * The select screen, the result panel and the console shortcut are all outside
+ * the play scene — one is a scene pushed on top of it, one is a UI object it
+ * owns, one is a global — and none of them may reconfigure a run mid-frame:
+ * the systems the level shapes are half-way through an update. So they leave
+ * a request here and the play scene picks it up at the top of its next
+ * `update`, which is the one moment nothing is in flight.
+ *
+ * A single slot, deliberately: two levels asked for in the same frame means the
+ * player pressed twice, and the second press is the one they meant.
+ */
+let requested: LevelDef | null = null;
+
+export function requestLevel(def: LevelDef): void {
+  requested = def;
+}
+
+export function takeRequestedLevel(): LevelDef | null {
+  const d = requested;
+  requested = null;
+  return d;
 }

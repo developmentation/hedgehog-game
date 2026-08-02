@@ -42,6 +42,7 @@ import { SPEEDS, SPEED_TAGS, speedIndex, setSpeedIndex, isEasy, setEasy } from '
 export const PAUSE_NONE = 0;
 export const PAUSE_RESUME = 1;
 export const PAUSE_SHOP = 2;
+export const PAUSE_LEVELS = 3;
 
 // ------------------------------------------------------------------- layout
 
@@ -63,7 +64,13 @@ const PANEL_H = Y_BTNS + H_BTNS + 22;
 
 const CHIP_GAP = 14;
 const BTN_GAP = 16;
-const BTN_RESUME_W = 470;
+/**
+ * The way out stays the widest thing on the bottom row, but it no longer takes
+ * a fixed 470: it shares the row with LEVELS and WORKSHOP now, so it is a share
+ * of the panel and the other two split what is left evenly.
+ */
+const BTN_RESUME_W = 400;
+const BTN_RESUME_SHARE = 0.48;
 
 /**
  * Slop around every plate. The rows are 132 tall, which is 40 CSS px at 390px
@@ -97,12 +104,13 @@ const ST: TextStyle = { size: 20 };
 const I_SPEED0 = 0;
 const I_EASY = 4;
 const I_RESUME = 5;
-const I_SHOP = 6;
-const N_ITEMS = 7;
+const I_LEVELS = 6;
+const I_SHOP = 7;
+const N_ITEMS = 8;
 
 /** Grid position of each item, so the arrow keys have something to walk. */
-const ROW = [0, 0, 0, 0, 1, 2, 2];
-const COL = [0, 1, 2, 3, 0, 0, 1];
+const ROW = [0, 0, 0, 0, 1, 2, 2, 2];
+const COL = [0, 1, 2, 3, 0, 0, 1, 2];
 
 interface Rect {
   x: number;
@@ -119,6 +127,7 @@ const ON = 'ON';
 const OFF = 'OFF';
 const RESUME = 'KEEP ROLLING';
 const SHOP = 'WORKSHOP';
+const LEVELS = 'LEVELS';
 const HINT_KEYS = 'ARROWS  ENTER   ESC RESUMES';
 
 export class PauseMenu {
@@ -212,18 +221,24 @@ export class PauseMenu {
     easy.w = innerW;
     easy.h = H_EASY;
 
-    const resumeW = Math.min(BTN_RESUME_W, innerW - 200 - BTN_GAP);
+    const resumeW = Math.min(BTN_RESUME_W, innerW * BTN_RESUME_SHARE);
     const res = this.rects[I_RESUME];
     res.x = innerX;
     res.y = p.y + Y_BTNS;
     res.w = resumeW;
     res.h = H_BTNS;
 
-    const shop = this.rects[I_SHOP];
-    shop.x = innerX + resumeW + BTN_GAP;
-    shop.y = p.y + Y_BTNS;
-    shop.w = innerW - resumeW - BTN_GAP;
-    shop.h = H_BTNS;
+    // LEVELS and WORKSHOP split the remainder. At the panel's full 860 that is
+    // 183 x 132 each, which is 56 x 40 CSS px at 390px width — past 44 on the
+    // short side once the 8 units of slop every plate here carries are counted.
+    const restW = (innerW - resumeW - BTN_GAP * 2) / 2;
+    for (let i = 0; i < 2; i++) {
+      const b = this.rects[I_LEVELS + i];
+      b.x = innerX + resumeW + BTN_GAP + i * (restW + BTN_GAP);
+      b.y = p.y + Y_BTNS;
+      b.w = restW;
+      b.h = H_BTNS;
+    }
   }
 
   private hit(i: number, x: number, y: number): boolean {
@@ -313,6 +328,7 @@ export class PauseMenu {
     const p = ctx.save.profile;
     if (i === I_RESUME) return PAUSE_RESUME;
     if (i === I_SHOP) return PAUSE_SHOP;
+    if (i === I_LEVELS) return PAUSE_LEVELS;
     if (i === I_EASY) {
       const on = !isEasy(p);
       setEasy(p, on);
@@ -484,11 +500,35 @@ export class PauseMenu {
     r.draw(caret, res.x + 46, cy, cw / caret.w, (cw * 0.72) / caret.h, -Math.PI / 2, C_DARK[0], C_DARK[1], C_DARK[2], a * 0.9);
     text(ctx, RESUME, res.x + 84, cy, 30, C_DARK, 'left', a, 0.1, 0);
 
+    // LEVELS is the way out of the one thing this game could not do from
+    // inside itself. It sits next to the way back into play, because choosing
+    // a different level is the other answer to "what now?".
+    const lv = this.plate(ctx, I_LEVELS, lift, a, false);
+    const lcy = lv.y + lift + lv.h / 2;
+    // A 2x2 of cards: the shape of the screen this opens, which is a better
+    // sign than any arrow — an arrow would have to say which way.
+    const tile = 13;
+    const gap = 5;
+    const gx = lv.x + lv.w / 2 - (tile * 2 + gap) / 2;
+    for (let i = 0; i < 4; i++) {
+      roundedPanel(
+        ctx,
+        gx + (i % 2) * (tile + gap),
+        lcy - 34 + Math.floor(i / 2) * (tile + gap),
+        tile,
+        tile,
+        3,
+        C_GOLD,
+        a * (0.55 + i * 0.13),
+      );
+    }
+    text(ctx, LEVELS, lv.x + lv.w / 2, lcy + 16, 24, C_PAPER, 'center', a * 0.95, 0.14, 2);
+
     const shop = this.plate(ctx, I_SHOP, lift, a, false);
     const spark = ctx.atlas.get('ui/spark');
     const scy = shop.y + lift + shop.h / 2;
-    r.draw(spark, shop.x + 34, scy, 26 / spark.w, 26 / spark.h, ctx.time * 0.5, C_GOLD[0], C_GOLD[1], C_GOLD[2], a * 0.9);
-    text(ctx, SHOP, shop.x + 58, scy, 24, C_PAPER, 'left', a * 0.95, 0.12, 2);
+    r.draw(spark, shop.x + shop.w / 2, scy - 26, 26 / spark.w, 26 / spark.h, ctx.time * 0.5, C_GOLD[0], C_GOLD[1], C_GOLD[2], a * 0.9);
+    text(ctx, SHOP, shop.x + shop.w / 2, scy + 16, 22, C_PAPER, 'center', a * 0.95, 0.12, 2);
   }
 }
 

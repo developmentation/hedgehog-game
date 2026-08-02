@@ -31,7 +31,17 @@ import { Parallax } from '../game/parallax';
 import { TUNING } from '../game/tuning';
 import { WordSession } from '../game/wordSession';
 import { WallField, type Wall, type Block } from '../game/wallField';
-import { LevelRun, LEVELS, bootLevel, getLevel, type LevelDef } from '../game/levels';
+import {
+  LevelRun,
+  LEVELS,
+  bootLevel,
+  getLevel,
+  isLocked,
+  nextLevelAfter,
+  requestLevel,
+  takeRequestedLevel,
+  type LevelDef,
+} from '../game/levels';
 import { Player } from '../game/player';
 import {
   Hud,
@@ -47,7 +57,21 @@ import {
 } from '../ui/hud';
 import { JumpButton } from '../ui/jumpButton';
 import { PauseButton } from '../ui/pauseButton';
-import { PauseMenu, PAUSE_RESUME, PAUSE_SHOP } from '../ui/pauseMenu';
+import { PauseMenu, PAUSE_RESUME, PAUSE_SHOP, PAUSE_LEVELS } from '../ui/pauseMenu';
+import {
+  ResultPanel,
+  RESULT_RETRY,
+  RESULT_LEVELS,
+  RESULT_NEXT,
+} from '../ui/resultPanel';
+import { openLevelSelect } from './levelSelect';
+import {
+  levelRecord,
+  noteLevelClear,
+  noteLevelPlay,
+  noteLevelScore,
+  type LevelClearFlags,
+} from '../engine/save';
 import { speedMul, isEasy, earnShare, SPEED_TAGS, speedIndex } from '../game/settings';
 import { Blend } from '../engine/gl';
 import { BLOCK_W, BLOCK_H } from '../art/letters';
@@ -126,6 +150,25 @@ export interface LevelProbe {
   scrollSpeed: number;
   /** No-penalty mode. */
   easy: boolean;
+
+  // --- everything below exists so a level change can be PROVED clean ---
+  /** Words spelled without breaking the combo — the pacing ramp's input. */
+  cleanWords: number;
+  /** How many words this level's filter resolved to. */
+  poolSize: number;
+  /** Wrong letters across the whole run, not just the current word. */
+  runMisses: number;
+  /** Seconds of live play since the level started. */
+  levelTime: number;
+  /** World scroll accumulator: the backdrop's position. */
+  distance: number;
+  /** Where the hedgehog actually is. */
+  playerX: number;
+  playerY: number;
+  /** Live walls in the field. */
+  wallCount: number;
+  /** The result panel is up, and its buttons in world coordinates. */
+  result: { open: boolean; buttons: { id: string; x: number; y: number; w: number; h: number }[] };
 }
 
 export class PlayScene implements Scene {
@@ -159,6 +202,19 @@ export class PlayScene implements Scene {
   private misses = 0;
   private lives = TUNING.scoring.maxMisses;
   private sparksEarned = 0;
+  /** Wrong letters across the whole run, and how long the run has been live. */
+  private runMisses = 0;
+  private levelT = 0;
+  /**
+   * This level's best score as it stood BEFORE this run.
+   *
+   * The record itself is updated at every word boundary, so that the endless
+   * run has a best score at all — which means that by the time a level
+   * finishes, the record already contains this run's own number and could
+   * never be beaten by it. The result card compares against this instead, and
+   * so says "NEW BEST" exactly when the player has beaten their old one.
+   */
+  private bestAtStart = 0;
 
   // --- hud state ---
   private scoreShown = 0;
@@ -226,6 +282,18 @@ export class PlayScene implements Scene {
   private paused = false;
   private pauseBtn = new PauseButton();
   private pauseMenu = new PauseMenu();
+  /**
+   * The end-of-level card. Owned rather than pushed, so the celebration it is
+   * congratulating keeps playing underneath it.
+   */
+  private result = new ResultPanel();
+  /** Reused so banking a clear allocates nothing. */
+  private clearFlags: LevelClearFlags = {
+    firstClear: false,
+    bestScore: false,
+    bestTime: false,
+    fewestMisses: false,
+  };
   /** No-op handed to the player while he is sitting; a field, so it never allocates. */
   private readonly noDash = (): void => {};
 
@@ -250,13 +318,24 @@ export class PlayScene implements Scene {
     // request is queued rather than applied here, so it can be made from a
     // console or a harness at any moment without landing mid-update.
     (window as any).__levels = {
-      list: () => LEVELS.map((l) => ({ id: l.id, title: l.title, goal: l.goal.kind })),
+      list: () =>
+        LEVELS.map((l) => ({
+          id: l.id,
+          title: l.title,
+          goal: l.goal.kind,
+          locked: isLocked(ctx.save.profile, l),
+        })),
       current: () => this.run.config.id,
+      // The debug shortcut ignores `requires` on purpose: a console entry point
+      // that respected progression would be useless for testing what it gates.
       start: (id: string) => {
         const def = getLevel(id);
-        if (def) this.pendingLevel = def;
+        if (def) requestLevel(def);
         return !!def;
       },
+      open: () => openLevelSelect(),
+      record: (id: string) => levelRecord(ctx.save.profile, id),
+      pool: () => this.run.config.pool.map((w) => w.word),
     };
     this.syncSettings(ctx);
     this.startLevel(ctx, this.run.config.def);
@@ -265,20 +344,41 @@ export class PlayScene implements Scene {
   exit(): void {
     (window as any).__probeFn = null;
     (window as any).__levels = null;
-    // The menu owns a window listener for its arrow keys. Leaving the scene
-    // while paused must not leave that behind.
+    // Both panels own a window listener for their arrow keys. Leaving the scene
+    // with either up must not leave one behind.
     if (this.paused) this.pauseMenu.close();
+    this.result.close();
     this.paused = false;
   }
 
   // ------------------------------------------------------------------ level
 
   /**
-   * Begin a run of one level. This is the only place a `LevelDef` becomes
-   * live: a fresh `LevelRun` is built and handed to the two systems that are
-   * shaped by it, and the scene's own totals are cleared.
+   * Begin a run of one level. This is the only place a `LevelDef` becomes live.
+   *
+   * SWITCHING LEVELS MID-SESSION MUST LEAVE NOTHING BEHIND. This used to be
+   * called once, at boot, so it only had to clear the handful of counters a
+   * replay touches. It is now the way a player changes level from a running
+   * game, which makes it a full teardown: every piece of state that a run can
+   * accumulate is either rebuilt from the new level or cleared here.
+   *
+   *   the run            a fresh `LevelRun`, handed to the two systems it shapes
+   *   the word session   reconfigured, then re-begun by `startWord`
+   *   the wall field     reconfigured, then emptied and re-seeded by `startWord`
+   *   the hedgehog       REPLACED. He carries a dozen private fields — a dash in
+   *                      flight, a jump cooldown, spring velocity, a stride
+   *                      phase, an echo ring — and `player.ts` has no reset. A
+   *                      new one is exact, and costs one allocation per level
+   *                      start rather than per frame.
+   *   the world          scroll distance, live particles, camera zoom and lift
+   *   the scene          score, combo, lives, misses, floaters, banners, the
+   *                      air buffer, the dash in flight, every HUD decay
+   *
+   * The theme follows for free: `new LevelRun` publishes it and `parallax.ts`
+   * rebuilds on the identity change.
    */
   private startLevel(ctx: Ctx, def: LevelDef): void {
+    this.result.close();
     this.run = new LevelRun(def);
     const cfg = this.run.config;
     this.session.configure(this.run);
@@ -289,12 +389,39 @@ export class PlayScene implements Scene {
     this.combo = 0;
     this.bestCombo = 0;
     this.sparksEarned = 0;
+    this.runMisses = 0;
+    this.levelT = 0;
     this.floaters.length = 0;
     this.noticeQueue.length = 0;
     this.notice.kind = NOTICE_NONE;
     this.scrollSpeed = TUNING.scroll.startSpeed * this.speedMul;
     // A level with no hop has nothing to teach about hopping.
     this.jumpHinted = !cfg.allowJump;
+
+    // The world, wiped rather than inherited.
+    this.distance = 0;
+    this.particles.clear();
+    this.player = new Player(this.particles);
+    ctx.cam.zoom = TUNING.camera.zoomBase;
+    ctx.cam.y = TUNING.camera.liftBase;
+
+    // Nothing in flight survives a level change.
+    this.pendingWall = null;
+    this.pendingBlock = null;
+    this.pendingCorrect = false;
+    this.bufWall = null;
+    this.bufBlock = null;
+    this.bufAge = 0;
+
+    // HUD decays, so the new level does not open mid-flash.
+    this.flash = 0;
+    this.comboFlash = 0;
+    this.speakerPulse = 0;
+    this.hintT = 0;
+
+    this.bestAtStart = levelRecord(ctx.save.profile, cfg.id).bestScore;
+    noteLevelPlay(ctx.save.profile, cfg.id);
+    ctx.save.save();
 
     this.startWord(ctx, true);
     this.phase = 'intro';
@@ -307,13 +434,59 @@ export class PlayScene implements Scene {
     }
   }
 
-  /** The goal is met: stop the run and leave the result on screen. */
+  /**
+   * The goal is met: bank the result and put the card up.
+   *
+   * `phase` still goes to `gameover` — that is what stops the spawner and eases
+   * the world to a halt — but it is no longer where the level ends. The panel
+   * owns what happens next, and it always offers somewhere to go.
+   */
   private finishLevel(ctx: Ctx): void {
     this.phase = 'gameover';
     this.phaseT = 0;
-    this.raiseNotice('LEVEL COMPLETE', this.run.config.title, NOTICE_GOOD, 4);
+
+    const cfg = this.run.config;
+    const p = ctx.save.profile;
+    // Easy mode clears the level but does not set records — the same rule the
+    // profile's own best score has always kept.
+    const f = noteLevelClear(
+      p,
+      cfg.id,
+      this.score,
+      this.levelT,
+      this.runMisses,
+      !this.easy,
+      this.clearFlags,
+    );
+    ctx.save.save();
+
+    const next = nextLevelAfter(p, cfg.id);
+    this.result.show(
+      ctx,
+      cfg.title,
+      next.id === cfg.id ? '' : next.title,
+      this.score,
+      this.levelT,
+      this.runMisses,
+      !this.easy && this.score > this.bestAtStart,
+      f.bestTime,
+      f.fewestMisses,
+    );
+
     ctx.audio.play('unlock', 1);
     ctx.shake(TUNING.feel.shake.word, TUNING.feel.shake.wordTime);
+  }
+
+  /** The result card's three answers to "what now?". */
+  private handleResult(ctx: Ctx, action: number): void {
+    if (action === RESULT_RETRY) {
+      this.startLevel(ctx, this.run.config.def);
+    } else if (action === RESULT_LEVELS) {
+      this.result.close();
+      openLevelSelect();
+    } else if (action === RESULT_NEXT) {
+      this.startLevel(ctx, nextLevelAfter(ctx.save.profile, this.run.config.id));
+    }
   }
 
   // ---------------------------------------------------------------- session
@@ -380,6 +553,10 @@ export class PlayScene implements Scene {
   // ----------------------------------------------------------------- update
 
   update(ctx: Ctx, dt: number): void {
+    // A level asked for from outside — the select screen, the result card, the
+    // console — lands here, at the one moment nothing is half-updated.
+    const asked = takeRequestedLevel();
+    if (asked) this.pendingLevel = asked;
     if (this.pendingLevel) {
       const def = this.pendingLevel;
       this.pendingLevel = null;
@@ -390,7 +567,18 @@ export class PlayScene implements Scene {
       this.updatePaused(ctx, dt);
       return;
     }
+    // The result card takes the input while it is up, but the frame behind it
+    // keeps running: the hedgehog is still on the column he finished on and the
+    // world is still easing to a stop, which is what the card is celebrating.
+    if (this.result.open) {
+      const act = this.result.update(ctx, dt);
+      if (act) {
+        this.handleResult(ctx, act);
+        return;
+      }
+    }
     this.phaseT += dt;
+    if (this.phase !== 'intro' && this.phase !== 'gameover') this.levelT += dt;
     this.parallax.update(ctx, dt);
     this.particles.update(dt);
     this.updateFloaters(dt);
@@ -562,6 +750,12 @@ export class PlayScene implements Scene {
     const act = this.pauseMenu.update(ctx, dt);
     if (act === PAUSE_RESUME) {
       this.setPaused(ctx, false);
+    } else if (act === PAUSE_LEVELS) {
+      // Two interactions from a running game: the pause control, then LEVELS.
+      // Leaving for the level list is not resuming, so the word is not spoken
+      // again — the same contract the workshop button keeps.
+      this.setPaused(ctx, false, false);
+      openLevelSelect();
     } else if (act === PAUSE_SHOP) {
       // Leaving for the workshop is not resuming: the word is not about to
       // start again, so it is not spoken again. The shop pushes over a running
@@ -701,6 +895,10 @@ export class PlayScene implements Scene {
   // ------------------------------------------------------------------ input
 
   private handleInput(ctx: Ctx): void {
+    // The result card owns every press while it is up, including the pause key.
+    // Nothing below may see them: a tap aimed at PLAY AGAIN must not also land
+    // on the shop chip behind it.
+    if (this.result.open) return;
     // ESCAPE AND P NOW MEAN PAUSE, which is what they mean everywhere else and
     // what a parent reaching over the child's shoulder will press. The workshop
     // has not lost a door: it keeps its own chip, which is how touch and mouse
@@ -739,8 +937,9 @@ export class PlayScene implements Scene {
       return;
     }
 
-    // The level is over. The only input left is "again", and it is armed a
-    // beat late so the tap that finished the level cannot restart it.
+    // The level is over and, somehow, the card is not up — the fallback that
+    // keeps a finished run from becoming a dead end even if the panel is
+    // dismissed. Armed a beat late so the tap that finished it cannot restart it.
     if (this.phase === 'gameover') {
       if (this.phaseT > RESTART_ARM && ctx.input.anyPressed) {
         this.startLevel(ctx, this.run.config.def);
@@ -941,6 +1140,9 @@ export class PlayScene implements Scene {
     if (passedBy) this.raiseJumpHint();
 
     this.misses++;
+    // Counted for the whole run, not the word: this is the number the level
+    // record keeps, and the per-word counter is reset by every new word.
+    this.runMisses++;
     if (!this.easy) {
       this.combo = 0;
       ctx.audio.resetCombo();
@@ -1037,6 +1239,10 @@ export class PlayScene implements Scene {
     }
     p.totalScore += Math.round(bonus * share);
     p.sparks += Math.round(this.sparksEarned * share);
+    // The level's own best score, banked at every word boundary rather than at
+    // the end — the endless run has no end, and a best score that only existed
+    // for levels that finish would leave its card permanently blank.
+    noteLevelScore(p, this.run.config.id, this.score, !this.easy);
     this.sparksEarned = 0;
     this.session.recordCompletion(ctx, this.misses);
 
@@ -1182,6 +1388,7 @@ export class PlayScene implements Scene {
     this.pauseBtn.layout(ctx, this.session.word.length);
     this.pauseBtn.draw(ctx, this.paused, this.assistTag);
     if (this.paused) this.pauseMenu.draw(ctx);
+    this.result.draw(ctx);
   }
 
   /**
@@ -1327,6 +1534,15 @@ export class PlayScene implements Scene {
       speedMul: this.speedMul,
       scrollSpeed: this.scrollSpeed,
       easy: this.easy,
+      cleanWords: this.run.cleanWords,
+      poolSize: cfg.pool.length,
+      runMisses: this.runMisses,
+      levelTime: this.levelT,
+      distance: this.distance,
+      playerX: this.player.x,
+      playerY: this.player.y,
+      wallCount: this.field.walls.length,
+      result: { open: this.result.open, buttons: this.result.probe() },
     };
   }
 }
