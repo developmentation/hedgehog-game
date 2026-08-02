@@ -241,6 +241,16 @@ export class Renderer {
    * atmospheric grade can touch the artwork. Subsystems additionally skip
    * their overlay passes when this is on. Toggled live via window.__raw().
    */
+  /**
+   * Diagnostic: the backdrop skips its atmospheric tinting and draws the
+   * paintings at their own exposure.
+   *
+   * Deliberately NOT enforced here. This used to force every sprite on a
+   * painted texture to white, which erased the hedgehog's equipped skin
+   * colour and had to be special-cased for the HUD pass and again for glyph
+   * outlines. Colour that means something is not the renderer's to discard;
+   * `parallax.ts` reads this flag and declines to tint itself.
+   */
   rawMode = false;
 
   /**
@@ -615,13 +625,7 @@ export class Renderer {
     ) {
       this.spritesCulled++;
       return;
-    }
-
-    if (this.rawMode && this.rawTextures.has(f.tex)) {
-      r = 1;
-      g = 1;
-      b = 1;
-    }
+    }
     if (this.count >= this.capacity) this.flush();
 
     // Texture slot. Runs of sprites share a texture, so the previous slot is

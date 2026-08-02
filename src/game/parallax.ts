@@ -667,6 +667,8 @@ export class Parallax {
   private clouds: { i: number; x: number; y: number; scale: number; speed: number; alpha: number }[] =
     [];
 
+  /** Mirror of ctx.rawMode, captured once per frame for the draw helpers. */
+  private raw = false;
   private ready = false;
 
   // ---------------------------------------------------------------- init
@@ -1227,6 +1229,7 @@ export class Parallax {
 
   /** `distance` is total world scroll in world units. */
   draw(ctx: Ctx, distance: number): void {
+    this.raw = ctx.rawMode;
     this.init(ctx);
     if (!this.painted) {
       this.drawProcedural(ctx, distance);
@@ -1383,7 +1386,23 @@ export class Parallax {
       const flip = (((idx % 2) + 2) % 2) === 0 ? l.scale : -l.scale;
       for (let j = 0; j < l.bands.length; j++) {
         const b = l.bands[j];
-        r.draw(b.f, x, b.y, flip, l.scale, 0, b.r, b.g, b.b, b.a);
+        // Raw mode: the painting draws at its own exposure, untinted. The
+        // backdrop opts out of its OWN tinting here rather than the renderer
+        // forcing every sprite white — that version also erased the
+        // hedgehog's equipped skin, which lives on the same painted texture.
+        const raw = this.raw;
+        r.draw(
+          b.f,
+          x,
+          b.y,
+          flip,
+          l.scale,
+          0,
+          raw ? 1 : b.r,
+          raw ? 1 : b.g,
+          raw ? 1 : b.b,
+          b.a,
+        );
       }
     }
   }
