@@ -564,6 +564,35 @@ export class AssetLibrary {
     return this.loadRest();
   }
 
+  /**
+   * Re-upload everything after a GPU context loss.
+   *
+   * `load` is deliberately additive and idempotent — it skips ids already
+   * resident — which is right for streaming a theme in and exactly wrong here:
+   * after a context loss every id is still "resident" as far as the frame table
+   * knows, while every `WebGLTexture` behind it is dead. So the residency
+   * bookkeeping is cleared first and the whole set is fetched again.
+   *
+   * The refetch is cheap: the PNGs come from the HTTP cache, and the expensive
+   * part of the original load was never the network but the decode, which now
+   * happens off-thread. Frames are rewritten in place under the same keys, so
+   * every cached `Frame` reference elsewhere in the game — parallax sub-frames,
+   * the glyph cached on a block — picks up the new texture without being told.
+   */
+  reload(gl: WebGL2RenderingContext, base = this.base, scale = 1): Promise<void> {
+    this.frames.clear();
+    this.byGroup.clear();
+    this.textures.length = 0; // the old handles died with the context
+    this.standaloneTextures = 0;
+    this.loadedCount = 0;
+    this.failedCount = 0;
+    this.ready = false;
+    this.stats = null;
+    this.pending = null;
+    this.clearFbo = null;
+    return this.load(gl, base, scale);
+  }
+
   has(id: string): boolean {
     return this.frames.has(id);
   }

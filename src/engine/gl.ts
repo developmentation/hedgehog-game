@@ -265,11 +265,13 @@ export class Renderer {
   offsetY = 0;
   dpr = 1;
 
-  private prog: WebGLProgram;
-  private vao: WebGLVertexArrayObject;
-  private instanceVBO: WebGLBuffer;
-  private uProj: WebGLUniformLocation;
-  private uGrade: WebGLUniformLocation;
+  // Assigned by `createGLObjects`, which the constructor always calls and a
+  // context restore calls again.
+  private prog!: WebGLProgram;
+  private vao!: WebGLVertexArrayObject;
+  private instanceVBO!: WebGLBuffer;
+  private uProj!: WebGLUniformLocation;
+  private uGrade!: WebGLUniformLocation;
 
   /**
    * Global output grade: [exposure, saturation]. 1,1 is an exact no-op.
@@ -398,6 +400,65 @@ export class Renderer {
     this.capacity = capacity;
     this.data = new Float32Array(capacity * FLOATS_PER_INSTANCE);
 
+    // A LOST CONTEXT MUST NOT BE A DEAD GAME.
+    //
+    // The browser takes the GL context away for reasons that have nothing to
+    // do with this code: the GPU driver resets, the tab is backgrounded on a
+    // phone under memory pressure, another tab hogs the GPU, the device
+    // sleeps. It is routine on mobile, which is where this game is mostly
+    // played. Without these two handlers the canvas freezes on the last frame
+    // it managed to draw and never comes back, because every GL object the
+    // renderer holds — program, VAO, buffers, every texture — is invalid and
+    // silently no-ops.
+    //
+    // `preventDefault` on the lost event is what tells the browser we intend
+    // to restore; without it `webglcontextrestored` is never fired at all.
+    canvas.addEventListener('webglcontextlost', (e) => {
+      e.preventDefault();
+      this.contextLost = true;
+      this.onContextLost?.();
+    });
+    canvas.addEventListener('webglcontextrestored', () => {
+      this.createGLObjects();
+      this.contextLost = false;
+      // The renderer can rebuild everything it owns, but not the CONTENT of
+      // the textures: those pixels came from the atlas baker and the asset
+      // loader, which live above it. The owner re-supplies them here.
+      this.onContextRestored?.();
+    });
+
+    this.createGLObjects();
+  }
+
+  /**
+   * True between `webglcontextlost` and `webglcontextrestored`.
+   *
+   * Every GL call in that window is a no-op that also generates errors, so the
+   * draw path checks this and skips rather than pretending to render.
+   */
+  contextLost = false;
+
+  /** Called when the context is lost, so the game can pause cleanly. */
+  onContextLost: (() => void) | null = null;
+
+  /**
+   * Called after the renderer has rebuilt its own GL objects. The owner must
+   * re-bake the atlas and re-upload assets here — the renderer does not know
+   * where their pixels come from.
+   */
+  onContextRestored: (() => void) | null = null;
+
+  /**
+   * Create every GL object this renderer owns.
+   *
+   * Split out of the constructor so it can be re-run verbatim after a context
+   * restore. Anything created here is invalid once the context is lost, so
+   * anything added here must be safe to create twice.
+   */
+  private createGLObjects(): void {
+    const gl = this.gl;
+    const capacity = this.capacity;
+
     this.prog = link(gl, compile(gl, gl.VERTEX_SHADER, VERT), compile(gl, gl.FRAGMENT_SHADER, FRAG));
     this.uProj = gl.getUniformLocation(this.prog, 'u_proj')!;
     this.uGrade = gl.getUniformLocation(this.prog, 'u_grade')!;
@@ -439,6 +500,16 @@ export class Renderer {
     const units = new Int32Array(TEX_SLOTS);
     for (let i = 0; i < TEX_SLOTS; i++) units[i] = i;
     gl.uniform1iv(gl.getUniformLocation(this.prog, 'u_tex'), units);
+
+    // Batch state and the offscreen world target belong to the dead context.
+    this.count = 0;
+    this.slotCount = 0;
+    this.lastSlot = 0;
+    this.blendOn = true;
+    this.fbo = null;
+    this.fboRb = null;
+    this.fboW = 0;
+    this.fboH = 0;
   }
 
   /**
@@ -634,6 +705,9 @@ export class Renderer {
   }
 
   begin(camX = 0, camY = 0, camZoom = 1): void {
+    // Every GL call against a lost context is a no-op that also raises errors,
+    // so the whole pass is skipped rather than half-executed.
+    if (this.contextLost) return;
     const gl = this.gl;
     gl.bindVertexArray(this.vao);
     gl.useProgram(this.prog);
@@ -684,6 +758,7 @@ export class Renderer {
    * perf HUD. The frame owner calls this once, before the first pass.
    */
   resetStats(): void {
+    if (this.contextLost) return;
     this.drawCalls = 0;
     this.spritesDrawn = 0;
     this.spritesCulled = 0;
@@ -1106,6 +1181,12 @@ export class Renderer {
   }
 
   flush(): void {
+    if (this.contextLost) {
+      this.count = 0;
+      this.slotCount = 0;
+      this.lastSlot = 0;
+      return;
+    }
     if (this.count === 0) {
       this.slotCount = 0;
       this.lastSlot = 0;
@@ -1168,6 +1249,7 @@ export class Renderer {
    * frame that only ever runs one pass still reaches the screen.
    */
   end(): void {
+    if (this.contextLost) return;
     this.flush();
     this.gl.bindVertexArray(null);
     if (this.passIndex === 0) {

@@ -46,6 +46,24 @@ async function boot(): Promise<void> {
   const assets = new AssetLibrary();
   await assets.load(r.gl, 'art/', Math.min(bakeScale, 1));
 
+  // RECOVER FROM A LOST GPU CONTEXT.
+  //
+  // The renderer rebuilds its own program, VAO and buffers, but it has no idea
+  // where texture pixels come from — those belong to the baker and the loader,
+  // which live here. So the owner re-supplies them, and every `Frame` in the
+  // game picks up the new `WebGLTexture` because both systems rewrite the frame
+  // table in place.
+  //
+  // Progress is not at risk either way: it lives in IndexedDB, not in GL.
+  r.onContextRestored = () => {
+    try {
+      atlas.bake(r.gl, bakeScale);
+      void assets.reload(r.gl, 'art/', Math.min(bakeScale, 1));
+    } catch (err) {
+      console.error('context restore failed', err);
+    }
+  };
+
   const audio = new AudioBus();
   const input = new Input(r, stage);
   const rng = new Rng(0x5eed1234);
