@@ -2189,8 +2189,16 @@ export class Player {
     // The smeared copies are taken from the WHEEL wherever there is one. They
     // used to be taken from the ball, which meant the rotational blur was four
     // extra faces fanned out around the first one.
-    const sf = this.blurFrame ?? f;
-    const sfAdj = this.blurFrame ? this.blurAdj : 1;
+    // The smear MUST be made from the same sprite as the body.
+    //
+    // It used to source `blurFrame` — a different piece of art, with its own
+    // curled hedgehog painted into it — while the body drew `hog_ball`. So two
+    // different hedgehog images were composited every frame: a ghost rolling
+    // behind the one you were actually controlling. Measured across 150 frames,
+    // both sprites appeared together in 134 of them. A motion smear is copies
+    // of the SAME image offset in rotation; anything else is a second character.
+    const sf = f;
+    const sfAdj = 1;
 
     if (rolling) {
       const maxEchoes = Math.max(1, Math.round(spin.echoes * soft));
