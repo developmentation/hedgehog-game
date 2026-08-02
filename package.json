@@ -11,7 +11,10 @@
     "capture": "node tools/capture.mjs",
     "shot": "node tools/shot.mjs",
     "gallery": "node tools/gallery.mjs",
-    "package": "node tools/package.mjs"
+    "package": "node tools/package.mjs",
+    "golden": "node tools/golden.mjs",
+    "golden:update": "node tools/golden.mjs --update",
+    "check": "npm run typecheck && node tools/golden.mjs && node tools/winnable.mjs --words 6 --miss --port 5501"
   },
   "devDependencies": {
     "playwright": "^1.48.0",
