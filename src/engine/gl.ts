@@ -16,6 +16,16 @@
  * Instance data is written into a single interleaved Float32Array and uploaded
  * with one bufferSubData per flush.
  *
+ * That upload is free, and it is worth knowing by how much: a frame's ~330
+ * sprites are 22 KB, which takes 1.4 us of CPU and no measurable GPU time —
+ * uploading **32x** as much per frame moved the GPU frame by less than the
+ * noise floor (see `tools/glbench.mjs --suite upload`). Packing the layout
+ * smaller, orphaning the buffer, or double-buffering it can therefore only
+ * lose: orphaning measured +0.8 ms. The layout has room for anything a future
+ * renderer wants to put in it (depth, a normal-map layer, a light index) at no
+ * bandwidth cost at all; the real ceiling is the 16 attribute locations GLSL ES
+ * 3.00 allows, of which this uses 6.
+ *
  * Per-instance layout (17 floats / 68 bytes):
  *   0..3   a_xform   : x, y, halfW, halfH        (world units, pre-rotation half-extents)
  *   4..7   a_rot     : cos, sin, pivotX, pivotY  (pivot in [-1..1] local quad space)
@@ -41,6 +51,17 @@ const BYTES_PER_INSTANCE = FLOATS_PER_INSTANCE * 4;
  * with the driver. The selector in the fragment shader is a three-deep binary
  * split rather than a linear chain, so it costs three comparisons, not eight —
  * this game is fill-rate bound and the selector runs per fragment.
+ *
+ * Measured, and it is cheaper than it looks: binding every slot to the SAME
+ * texture so that the selector is the only difference between two arms puts it
+ * at **0.12-0.20 ms of an 8 ms frame** (`tools/glbench.mjs --suite select`),
+ * which is at or below the run-to-run noise floor. A `TEXTURE_2D_ARRAY` with a
+ * layer index per instance would collapse this to one sampler and one bind, and
+ * that is the whole prize: about 2%. It is not worth the repack it would force
+ * (every layer of an array must share one size, and this game's textures are
+ * 4096 atlas + 1536x1024 + four 1400x933). Revisit only when materials need a
+ * second map per sprite, where the slot pressure — not the branch — is the
+ * argument.
  */
 const TEX_SLOTS = 8;
 
@@ -121,6 +142,14 @@ void main() {
     }
   }
   vec4 c = texel * v_color;
+  // The most valuable instruction in this shader, against expectation. discard
+  // disables early-Z, but this pass has no depth buffer for early-Z to skip;
+  // what it saves is the ROP read-modify-write on every fragment inside a quad
+  // and outside its ink, which — at 17-57% ink coverage — is most of them.
+  // Deleting it and letting a==0 blend to a no-op measured 10-22% SLOWER, and
+  // raising the threshold to 0.02 or 0.06 was slower again: killing whole tiles
+  // of empty texels is what pays, not trimming the ink boundary. A tile-based
+  // mobile GPU may invert this; tools/glbench.mjs rebuilds the variants.
   if (c.a < 0.0025) discard;
 
   // Global grade, applied per fragment before compositing.
@@ -134,6 +163,11 @@ void main() {
   // So it is corrected once, here, at the end: u_grade.x scales exposure and
   // u_grade.y pulls saturation back toward luma. Both default to 1.0, which is
   // an exact no-op, and are tunable live via window.__grade(exposure, sat).
+  //
+  // The branchless form costs nothing measurable when it is a no-op: cutting
+  // the three lines below entirely moved the frame by 0.00 ms, and guarding
+  // them with a uniform branch made it slower. Same for the dither. This is a
+  // bandwidth-bound frame, not an ALU-bound one.
   vec3 g = c.rgb * u_grade.x;
   float luma = dot(g, vec3(0.2126, 0.7152, 0.0722));
   g = mix(vec3(luma), g, u_grade.y);
@@ -1070,9 +1104,67 @@ export class Renderer {
     }
   }
 
+  /**
+   * What `clear()` actually paints.
+   *
+   * `glClear` is not a metadata fast path on this class of hardware — it is a
+   * full-rate write. Measured with `EXT_disjoint_timer_query_webgl2` on Intel
+   * UHD at 2560x1440, the frame's single clear costs **1.0-1.26 ms of an 8.0-8.8
+   * ms frame, 13-14%**, and scissoring it to a sixteenth of the area recovers
+   * 94% of that — the cost is proportional to area, because it is 14.8 MB of
+   * bandwidth.
+   *
+   * It is also, in this game, almost entirely redundant. Rendering the same
+   * frozen pose twice with two different clear colours and diffing (see
+   * `tools/clearprobe.mjs`) shows how many pixels the clear is visible through:
+   *
+   *   16:9, cave theme        0 of 3,686,400
+   *   16:9, meadow / winter   383 / 391       one small gap at the bottom band
+   *   portrait 390x844        32%             the letterbox bars, which are real
+   *
+   * So the frame pays 14% of its GPU time to get roughly 390 pixels right.
+   *
+   *   'full'  clear the whole target every frame. Always correct; the default,
+   *           because the renderer cannot prove coverage — the backdrop covers
+   *           the band as a UNION of bands, most of which are 17-41% ink, and
+   *           nothing tells the renderer which texels are opaque.
+   *   'bars'  clear only the letterbox bars. Correct **iff** the caller
+   *           guarantees the rendered band is painted over every frame. Worth
+   *           1.19 ms at 16:9, where there are no bars at all.
+   *   'none'  clear nothing.
+   *
+   * Switching to `'bars'` is a contract with the content, not an optimisation
+   * the renderer can take on its own: see docs/RENDERER-AUDIT.md.
+   */
+  clearPolicy: 'full' | 'bars' | 'none' = 'full';
+
   clear(r: number, g: number, b: number): void {
     const gl = this.gl;
+    if (this.clearPolicy === 'none') return;
     gl.clearColor(r, g, b, 1);
-    gl.clear(gl.COLOR_BUFFER_BIT);
+    if (this.clearPolicy !== 'bars') {
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      return;
+    }
+
+    // Bars only. The target may be the reduced-scale offscreen buffer, so the
+    // band is measured in whatever pixels are currently being rendered into.
+    const ph = this.canvas.height;
+    const s = this.scaledPass ? this.renderScale : 1;
+    const tw = Math.max(1, Math.round(this.canvas.width * s));
+    const th = Math.max(1, Math.round(ph * s));
+    const barBelow = Math.round(this.vpY * s);
+    const bandTop = barBelow + Math.max(1, Math.round((this.vpH || ph) * s));
+    if (barBelow <= 0 && bandTop >= th) return; // full-bleed: no bars to paint
+    gl.enable(gl.SCISSOR_TEST);
+    if (barBelow > 0) {
+      gl.scissor(0, 0, tw, barBelow);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+    }
+    if (bandTop < th) {
+      gl.scissor(0, bandTop, tw, th - bandTop);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+    }
+    gl.disable(gl.SCISSOR_TEST);
   }
 }
