@@ -84,7 +84,7 @@ export const TUNING = {
      * the blur keeps the silhouette and the face reading as *him* at every
      * speed the game can reach. Lower = more character, less speed.
      */
-    blurMixCap: 0.82,
+    blurMixCap: 0,
     /**
      * Value separation against the painted backdrop.
      *

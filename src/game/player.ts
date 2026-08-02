@@ -202,7 +202,15 @@ const BLUR_SPIN_HI = 7.4;
  * Near-solid, because dash flight is the one state where the body swings onto
  * the travel vector: nothing readable may be on it while it does.
  */
-const BLUR_DASH = 0.98;
+/**
+ * Disabled. Compositing a second sprite over the ball never worked: the wheel
+ * art carries its own curled hedgehog in the middle, so blending it over the
+ * solid ball read as two hedgehogs at once — static and spinning together —
+ * at every mix level above zero. The roll is now the ball sprite rotating,
+ * with the additive smear copies carrying the sense of speed. One sprite, one
+ * rotation, nothing to double.
+ */
+const BLUR_DASH = 0;
 
 /**
  * Hardest the painted face is ever tilted off upright, radians.
