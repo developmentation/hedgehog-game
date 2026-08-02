@@ -160,6 +160,17 @@ export class Renderer {
    */
   rawMode = false;
 
+  /**
+   * Textures raw mode is allowed to touch: the generated paintings.
+   *
+   * Raw mode must not be a blanket "ignore all colour". Glyphs, UI and
+   * particles are baked WHITE and get their colour entirely at draw time —
+   * a letter is four near-black outline copies behind a white fill, so
+   * forcing that stack to white turns every letter into a ghosted double.
+   * Only the painted art is meant to render untinted.
+   */
+  rawTextures = new Set<WebGLTexture>();
+
   private data: Float32Array;
   private count = 0;
   private capacity: number;
@@ -452,7 +463,7 @@ export class Renderer {
     a = 1,
   ): void {
     if (a <= 0.0025) return;
-    if (this.rawMode) {
+    if (this.rawMode && this.rawTextures.has(f.tex)) {
       r = 1;
       g = 1;
       b = 1;

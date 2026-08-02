@@ -154,6 +154,9 @@ async function boot(): Promise<void> {
     },
   });
 
+  // Raw mode applies to the painted assets only — never to the procedural
+  // atlas, which holds glyphs, UI and particles that are white by design.
+  for (const frame of assets.frames.values()) r.rawTextures.add(frame.tex);
   r.rawMode = ctx.rawMode;
 
   attachDebug(ctx, loop, { bakeMs });
