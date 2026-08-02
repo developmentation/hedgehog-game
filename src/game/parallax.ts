@@ -811,6 +811,9 @@ export class Parallax {
 
   /** `distance` is total world scroll in world units. */
   draw(ctx: Ctx, distance: number): void {
+    // The backdrop draws its paintings at their own exposure in raw mode.
+    // Turned on for this pass only, so nothing downstream is affected.
+    ctx.r.untint = ctx.rawMode;
     this.raw = ctx.rawMode;
     this.init(ctx);
     if (!this.painted) {
@@ -893,6 +896,7 @@ export class Parallax {
     this.drawRow(ctx, this.near, F_NEAR, distance, !still, 1);
     this.drawRow(ctx, this.fringe, F_NEAR, distance, !still, 1);
     if (!this.foreHosted) this.drawForegroundPass(ctx, distance);
+    ctx.r.untint = false;
   }
 
   /**
@@ -901,10 +905,14 @@ export class Parallax {
    * off; if nobody calls it the foliage still draws inside `draw`.
    */
   drawForeground(ctx: Ctx, distance: number): void {
+    // The backdrop draws its paintings at their own exposure in raw mode.
+    // Turned on for this pass only, so nothing downstream is affected.
+    ctx.r.untint = ctx.rawMode;
     this.init(ctx);
     if (!this.painted) return;
     this.foreHosted = true;
     this.drawForegroundPass(ctx, distance);
+    ctx.r.untint = false;
   }
 
   private drawForegroundPass(ctx: Ctx, distance: number): void {

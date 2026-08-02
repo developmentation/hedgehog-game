@@ -253,6 +253,9 @@ export class Renderer {
    */
   rawMode = false;
 
+  /** While set, sprites draw at their own colour. Scoped: see parallax.ts. */
+  untint = false;
+
   /**
    * Textures raw mode is allowed to touch: the generated paintings.
    *
@@ -933,6 +936,11 @@ export class Renderer {
     a = 1,
   ): void {
     if (a <= 0.0025) return;
+    if (this.untint) {
+      r = 1;
+      g = 1;
+      b = 1;
+    }
 
     const hw = f.w * 0.5 * scaleX;
     const hh = f.h * 0.5 * scaleY;
