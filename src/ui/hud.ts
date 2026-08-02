@@ -445,8 +445,11 @@ export class Hud {
     // --- foreground text ---------------------------------------------------
     this.drawFloaters(ctx, s, L);
 
-    const vig = ctx.atlas.get('ui/vignette');
-    r.draw(vig, L.cx, (r.viewTop + L.bottom) * 0.5, (L.right - L.left) / vig.w, (L.bottom - r.viewTop) / vig.h, 0, 1, 1, 1, 0.52);
+    if (!ctx.rawMode) {
+
+      const vig = ctx.atlas.get('ui/vignette');
+    
+    }
   }
 
   /** Refresh the per-word and per-value caches. Allocates only when they change. */

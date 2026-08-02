@@ -67,6 +67,7 @@ async function boot(): Promise<void> {
     time: 0,
     alpha: 0,
     timeScale: 1,
+    rawMode: false,
     reducedMotion:
       save.profile.settings.reducedMotion ||
       window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ||
@@ -164,6 +165,14 @@ async function boot(): Promise<void> {
     r.grade[0] = e;
     r.grade[1] = sat;
     return `grade exposure=${e} saturation=${sat}`;
+  };
+
+  // Diagnostic: window.__raw(true) draws the art with no tints, washes,
+  // vignette, flash or hero separation passes at all.
+  (window as any).__raw = (on = true) => {
+    ctx.rawMode = !!on;
+    r.rawMode = !!on;
+    return on ? "RAW: art only" : "styled";
   };
 
   // Expose a handle for the automated capture harness.

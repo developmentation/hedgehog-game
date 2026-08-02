@@ -151,6 +151,15 @@ export class Renderer {
    */
   grade: [number, number] = [1, 1];
 
+  /**
+   * Diagnostic: draw every sprite at its own colour, unmodified.
+   *
+   * Forces the per-sprite colour multiply to white so no tint, fade or
+   * atmospheric grade can touch the artwork. Subsystems additionally skip
+   * their overlay passes when this is on. Toggled live via window.__raw().
+   */
+  rawMode = false;
+
   private data: Float32Array;
   private count = 0;
   private capacity: number;
@@ -443,6 +452,11 @@ export class Renderer {
     a = 1,
   ): void {
     if (a <= 0.0025) return;
+    if (this.rawMode) {
+      r = 1;
+      g = 1;
+      b = 1;
+    }
     if (this.curTex !== f.tex) {
       this.flush();
       this.curTex = f.tex;

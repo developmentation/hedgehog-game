@@ -53,6 +53,8 @@ export interface Ctx {
   alpha: number;
   /** Global slow-motion / hit-stop multiplier applied to dt. */
   timeScale: number;
+  /** Diagnostic: skip every overlay/wash pass and draw the art as authored. */
+  rawMode: boolean;
   /** True when the player has asked for reduced motion. */
   reducedMotion: boolean;
   /** Request a screen shake. Magnitude is in world units. */

@@ -1242,12 +1242,14 @@ export class Parallax {
     // 3 ----------------------------- mid hills + the two washes
     this.drawLayer(r, this.hill!, distance);
     const hz = this.hazeC;
-    for (let i = 0; i < this.haze.length; i++) {
+    // Overlay wash — skipped entirely in raw mode.
+    if (!ctx.rawMode) for (let i = 0; i < this.haze.length; i++) {
       const w = this.haze[i];
       r.draw(this.hazeF!, cx, w.y, spanW, w.h, 0, hz[0], hz[1], hz[2], w.a);
     }
     const sc = this.scrimC;
-    for (let i = 0; i < this.scrim.length; i++) {
+    // Overlay wash — skipped entirely in raw mode.
+    if (!ctx.rawMode) for (let i = 0; i < this.scrim.length; i++) {
       const w = this.scrim[i];
       r.draw(this.scrimF!, cx, w.y, spanW, w.h, 0, sc[0], sc[1], sc[2], w.a);
     }
@@ -1286,12 +1288,14 @@ export class Parallax {
       r.draw(g, x, y, this.groundScale * flip, this.groundScale, 0, 3.46, 2.92, 2.1, 1);
     }
     const rk = RAKE_C;
-    for (let i = 0; i < this.rake.length; i++) {
+    // Overlay wash — skipped entirely in raw mode.
+    if (!ctx.rawMode) for (let i = 0; i < this.rake.length; i++) {
       const w = this.rake[i];
       r.draw(this.rakeF!, cx, w.y, spanW, w.h, 0, rk[0], rk[1], rk[2], w.a);
     }
     const dk = DUSK_C;
-    for (let i = 0; i < this.dusk.length; i++) {
+    // Overlay wash — skipped entirely in raw mode.
+    if (!ctx.rawMode) for (let i = 0; i < this.dusk.length; i++) {
       const w = this.dusk[i];
       r.draw(this.duskF!, cx, w.y, spanW, w.h, 0, dk[0], dk[1], dk[2], w.a);
     }
