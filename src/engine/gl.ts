@@ -366,6 +366,15 @@ export class Renderer {
    */
   autoScale = true;
 
+  /**
+   * Let the resolution climb back up after it has dropped.
+   *
+   * Off. Climbing is what turns a single adjustment into a cycle of visible
+   * sharpness pops; see `tickScaler`. Turn it on for a long session on a
+   * machine whose load genuinely comes and goes.
+   */
+  scaleRecovery = false;
+
   /** Frame rate the adaptive controller steers toward. */
   targetFps = 58;
 
@@ -890,7 +899,28 @@ export class Renderer {
     const last = this.scaleLadder.length - 1;
 
     if (p70 > budget * 1.1 && this.scaleStep < last) {
-      const undoing = this.lastStepDir > 0 && this.sinceStep < 2;
+      // ANY step up that has to be undone was a failed probe, however long it
+      // survived — not just one undone inside two seconds.
+      //
+      // This used to read `this.lastStepDir > 0 && this.sinceStep < 2`, and
+      // that time window is what made the resolution hunt forever. Measured on
+      // an Intel UHD at 2560x1440, the controller walked
+      // 1 -> 0.85 -> 0.72 -> 0.85 -> 0.72 -> 0.6 -> 0.72 -> 0.6 -> 0.72 -> 0.6
+      // — eleven changes in fifteen seconds, with no end state. The 0.72 rung
+      // held for about 2.1 s each time: comfortably past the two-second
+      // window, so the failure was never recorded, the ceiling was never
+      // pinned, and the rung was retried immediately and forever.
+      //
+      // Every one of those changes re-renders the world at a new resolution
+      // and resamples it, so the picture visibly pops between sharp and soft.
+      // That reads as flicker, and it is worse than simply running a rung
+      // lower: a stable soft frame looks like a style, an unstable one looks
+      // broken.
+      //
+      // A rung that cannot hold is a rung that cannot hold. Recovery is not
+      // lost — it is what the `quiet` backoff below is for, which re-probes
+      // after 20 s, then 40, then 80, capped at two minutes.
+      const undoing = this.lastStepDir > 0;
       this.scaleStep++;
       this.renderScale = this.scaleLadder[this.scaleStep];
       if (undoing) {
@@ -904,6 +934,32 @@ export class Renderer {
       this.lastStepDir = -1;
       this.sinceStep = 0;
       this.upStreak = 0;
+      return;
+    }
+
+    // RESOLUTION IS ONE-WAY BY DEFAULT: it may drop to protect the frame rate,
+    // and it never climbs back.
+    //
+    // Every change re-renders the world at a different resolution and
+    // resamples it, so it is a visible pop between sharp and soft. Climbing
+    // back is the only thing that can produce a CYCLE of those, because a
+    // probe upward on a machine that cannot hold the higher rung must always
+    // be undone. Measured on Intel UHD at 2560x1440, the controller produced
+    // eleven changes in fifteen seconds and never settled; every tuning
+    // constant that damps it only makes the cycle slower, not absent.
+    //
+    // This game does not need the resolution back. It is a mostly static
+    // scene, the win from a higher rung is sharpness rather than playability,
+    // and a picture that keeps twitching reads as broken in a way that a
+    // slightly soft one never does. So the ratchet only turns one way: at most
+    // one step per genuine slowdown, and the frame is stable forever after.
+    //
+    // `scaleRecovery = true` restores the old probing behaviour for anything
+    // that would rather have the sharpness back — a long session on a machine
+    // whose load really does come and go.
+    if (!this.scaleRecovery) {
+      this.upStreak = 0;
+      this.quiet = 0;
       return;
     }
 
@@ -926,6 +982,20 @@ export class Renderer {
     this.quiet += elapsed;
     if (++this.upStreak < 2) return;
     this.upStreak = 0;
+
+    // Do not go looking for headroom until the current rung has held for a
+    // few seconds.
+    //
+    // Without this the controller probes upward while it is still on its way
+    // DOWN: from cold it walked 1 -> 0.85 -> 0.72 -> 0.85 -> 0.72 -> 0.6 ->
+    // 0.72 -> 0.6, and three of those seven changes were probes taken before
+    // the descent had even found its floor. Each one is a visible pop in
+    // sharpness, and they land in the first ten seconds of play, which is
+    // exactly when someone is deciding whether the game looks right.
+    //
+    // A rung that has only been held for a moment has not yet shown it can
+    // hold at all, so it is no basis for asking for more.
+    if (this.sinceStep < 5) return;
     if (this.scaleStep > this.ceiling) {
       this.scaleStep--;
       this.renderScale = this.scaleLadder[this.scaleStep];
@@ -936,7 +1006,13 @@ export class Renderer {
       return;
     }
     if (this.scaleStep > 0 && this.scaleStep === this.ceiling) {
-      const retry = Math.min(120, 20 * Math.pow(2, this.ceilFails - 1));
+      // Re-probe rarely. Every probe that fails costs two visible resolution
+      // changes, and on a machine that genuinely cannot hold the rung it will
+      // fail every time. Recovering some sharpness a minute sooner is not
+      // worth a picture that keeps twitching; 60 s, then 2 min, then 4, capped
+      // at 5. (Was 20 s doubling to a 2 min cap, which on this hardware meant
+      // a visible pop roughly every 40 seconds, forever.)
+      const retry = Math.min(300, 60 * Math.pow(2, this.ceilFails - 1));
       if (this.quiet >= retry) {
         // Long enough with room to spare that the load has plausibly changed.
         this.quiet = 0;
