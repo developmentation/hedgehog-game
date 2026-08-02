@@ -46,6 +46,9 @@ import {
   type HudNotice,
 } from '../ui/hud';
 import { JumpButton } from '../ui/jumpButton';
+import { PauseButton } from '../ui/pauseButton';
+import { PauseMenu, PAUSE_RESUME, PAUSE_SHOP } from '../ui/pauseMenu';
+import { speedMul, isEasy, earnShare, SPEED_TAGS, speedIndex } from '../game/settings';
 import { Blend } from '../engine/gl';
 import { BLOCK_W, BLOCK_H } from '../art/letters';
 import { INK, rgb } from '../art/palette';
@@ -91,6 +94,15 @@ const NOTICE_QUEUE_MAX = 3;
 const RESTART_ARM = 0.8;
 
 /**
+ * How far the hedgehog settles while he waits out a pause, as body squash.
+ *
+ * Negative is compression: he drops onto his haunches and widens, which is the
+ * whole difference between a character who has sat down and a character whose
+ * animation has been switched off.
+ */
+const SIT_SQUASH = -0.28;
+
+/**
  * What the harness can read about the level on top of the play state. Kept out
  * of `PlayProbe` so the core contract stays as it was; `probe()` widens its
  * return type instead.
@@ -107,6 +119,13 @@ export interface LevelProbe {
   tier: number;
   columnHeight: number;
   targetSpeed: number;
+  /** The world is stopped and the hedgehog is sitting. */
+  paused: boolean;
+  /** The player's scroll multiplier, and the speed the world is moving at now. */
+  speedMul: number;
+  scrollSpeed: number;
+  /** No-penalty mode. */
+  easy: boolean;
 }
 
 export class PlayScene implements Scene {
@@ -193,6 +212,38 @@ export class PlayScene implements Scene {
   private bufBlock: Block | null = null;
   private bufAge = 0;
 
+  // --- the pause, and the two assists that live behind it ------------------
+  /**
+   * The world is stopped.
+   *
+   * Held here rather than as a scene pushed over the top, because a pause in
+   * this game is not a frozen frame: the hedgehog has to be seen to stop
+   * rolling, sit down and wait, which means the scene must keep running his
+   * idle while every part of the round — the scroll, the spawner, the phase
+   * clock, the clue, the speech — stands still. A pushed scene would have
+   * stopped him mid-stride instead.
+   */
+  private paused = false;
+  private pauseBtn = new PauseButton();
+  private pauseMenu = new PauseMenu();
+  /** No-op handed to the player while he is sitting; a field, so it never allocates. */
+  private readonly noDash = (): void => {};
+
+  /**
+   * The player's own settings, mirrored once per frame.
+   *
+   * `speedMul` scales the world and therefore the spawner (which is paced by
+   * distance, so it follows for free); `easy` decides whether a mistake is
+   * allowed to cost anything. Both are read from the profile rather than
+   * cached at level start, so a change made in the pause menu is live the
+   * instant the game resumes — and `applySpeed` re-derives the current target
+   * so it does not wait for the next word to take effect.
+   */
+  private speedMul = 1;
+  private easy = false;
+  /** The caption the pause control wears when the assists are off default. */
+  private assistTag = '';
+
   enter(ctx: Ctx): void {
     (window as any).__probeFn = () => this.probe();
     // The only entry point a level needs: list what exists, ask for one. The
@@ -207,12 +258,17 @@ export class PlayScene implements Scene {
         return !!def;
       },
     };
+    this.syncSettings(ctx);
     this.startLevel(ctx, this.run.config.def);
   }
 
   exit(): void {
     (window as any).__probeFn = null;
     (window as any).__levels = null;
+    // The menu owns a window listener for its arrow keys. Leaving the scene
+    // while paused must not leave that behind.
+    if (this.paused) this.pauseMenu.close();
+    this.paused = false;
   }
 
   // ------------------------------------------------------------------ level
@@ -236,7 +292,7 @@ export class PlayScene implements Scene {
     this.floaters.length = 0;
     this.noticeQueue.length = 0;
     this.notice.kind = NOTICE_NONE;
-    this.scrollSpeed = TUNING.scroll.startSpeed;
+    this.scrollSpeed = TUNING.scroll.startSpeed * this.speedMul;
     // A level with no hop has nothing to teach about hopping.
     this.jumpHinted = !cfg.allowJump;
 
@@ -275,9 +331,9 @@ export class PlayScene implements Scene {
     const n = this.notice;
     if (n.kind !== NOTICE_NONE) n.life = Math.min(n.life, n.t + 0.3);
 
-    // The level's difficulty shape decides the pace; TUNING decides how the
-    // world eases into it.
-    this.targetSpeed = this.run.speed;
+    // The level's difficulty shape decides the pace, the player's speed setting
+    // scales it, and TUNING decides how the world eases into the result.
+    this.targetSpeed = this.run.speed * this.speedMul;
     if (!first) this.scrollSpeed = this.targetSpeed * TUNING.scroll.resumeFactor;
 
     this.phase = 'listening';
@@ -329,6 +385,11 @@ export class PlayScene implements Scene {
       this.pendingLevel = null;
       this.startLevel(ctx, def);
     }
+    this.syncSettings(ctx);
+    if (this.paused) {
+      this.updatePaused(ctx, dt);
+      return;
+    }
     this.phaseT += dt;
     this.parallax.update(ctx, dt);
     this.particles.update(dt);
@@ -339,9 +400,13 @@ export class PlayScene implements Scene {
     this.handleInput(ctx);
 
     const S = TUNING.scroll;
+    // Every phase target is scaled by the player's setting, not just the one
+    // the round is playing towards: a slow world has to be slow behind the
+    // title card and during a setback too, or the assist reads as a stutter.
+    const mul = this.speedMul;
     switch (this.phase) {
       case 'intro':
-        this.scrollSpeed = damp(this.scrollSpeed, S.introSpeed, S.ease.intro, dt);
+        this.scrollSpeed = damp(this.scrollSpeed, S.introSpeed * mul, S.ease.intro, dt);
         break;
       case 'listening':
         this.scrollSpeed = damp(this.scrollSpeed, this.targetSpeed * S.listenFactor, S.ease.listening, dt);
@@ -355,7 +420,7 @@ export class PlayScene implements Scene {
         this.updateCelebrate(ctx, dt);
         break;
       case 'setback':
-        this.scrollSpeed = damp(this.scrollSpeed, S.setbackSpeed, S.ease.setback, dt);
+        this.scrollSpeed = damp(this.scrollSpeed, S.setbackSpeed * mul, S.ease.setback, dt);
         if (this.phaseT > TUNING.feel.setbackHold) {
           this.phase = 'playing';
           this.phaseT = 0;
@@ -400,9 +465,132 @@ export class PlayScene implements Scene {
     });
     this.player.update(ctx, dt, this.scrollSpeed, () => this.completeDash(ctx));
     this.jumpBtn.update(dt, this.player.canJump() && this.canJumpNow());
+    this.pauseBtn.update(dt);
     this.flushAirBuffer(ctx, dt);
     this.maybeHintJump();
     this.updateCamera(ctx, dt);
+  }
+
+  // ------------------------------------------------------------------- pause
+
+  /**
+   * Mirror the player's settings into the scene, once per frame.
+   *
+   * Read rather than cached at level start, so a change made from the pause
+   * menu is live the moment the game resumes — and the current target speed is
+   * re-derived on the spot rather than waiting for the next word, which is what
+   * makes the speed chips feel like a dial instead of a preference.
+   */
+  private syncSettings(ctx: Ctx): void {
+    const p = ctx.save.profile;
+    const mul = speedMul(p);
+    const easy = isEasy(p);
+    if (mul === this.speedMul && easy === this.easy) return;
+    if (mul !== this.speedMul) {
+      this.speedMul = mul;
+      this.targetSpeed = this.run.speed * mul;
+    }
+    this.easy = easy;
+    // Rebuilt only when a setting moves, so the caption costs nothing per frame.
+    const speedTag = mul === 1 ? '' : SPEED_TAGS[speedIndex(p)];
+    this.assistTag = easy ? (speedTag ? `${speedTag}  EASY` : 'EASY') : speedTag;
+  }
+
+  /**
+   * Stop, or start again.
+   *
+   * Stopping cancels the speech and freezes the round where it stands; nothing
+   * is reset, so a dash in flight is still in flight when the world starts
+   * moving again. Starting again hands the word back: the player walked away
+   * mid-spelling, so they get the word spoken and the clue returned exactly as
+   * the HINT button would give it to them.
+   */
+  private setPaused(ctx: Ctx, on: boolean, recap = true): void {
+    if (on === this.paused) return;
+    this.paused = on;
+    ctx.audio.play('uiTap', 0.9);
+    if (on) {
+      ctx.audio.cancelSpeech();
+      // Park the scamper on a planted frame. The cycle is driven by distance,
+      // so it would otherwise hold whatever half-stride the world happened to
+      // stop on — a hedgehog frozen mid-step reads as a dropped frame, where
+      // one with both paws down reads as a hedgehog who has stopped.
+      if (this.player.state === 'run') {
+        this.player.stridePhase = 0;
+        this.player.walkIndex = 0;
+      }
+      this.pauseMenu.open(ctx);
+      return;
+    }
+    this.pauseMenu.close();
+    if (recap && (this.phase === 'listening' || this.phase === 'playing')) {
+      this.speakWord(ctx);
+      this.hintT = TUNING.feel.hintHold;
+    }
+  }
+
+  /**
+   * The paused frame.
+   *
+   * Ambient only: the sky keeps drifting and dust already in the air settles,
+   * because a completely dead frame reads as a crash. Nothing that belongs to
+   * the round advances — not the phase clock, not the scroll, not the spawner,
+   * not the miss timer, not the clue, not the camera.
+   */
+  private updatePaused(ctx: Ctx, dt: number): void {
+    this.parallax.update(ctx, dt);
+    this.particles.update(dt);
+    this.pauseBtn.update(dt);
+    this.pauseBtn.layout(ctx, this.session.word.length);
+    this.sitAndWait(ctx, dt);
+
+    if (ctx.input.pausePressed) {
+      this.setPaused(ctx, false);
+      return;
+    }
+    // The control that stopped the world is also the way to start it again, so
+    // a player who found pause never has to find anything else. It is tested
+    // before the menu, though they cannot overlap.
+    for (let i = 0; i < ctx.input.taps.length; i++) {
+      const t = ctx.input.taps[i];
+      if (!this.pauseBtn.hit(t.x, t.y)) continue;
+      this.pauseBtn.bump();
+      this.setPaused(ctx, false);
+      return;
+    }
+
+    const act = this.pauseMenu.update(ctx, dt);
+    if (act === PAUSE_RESUME) {
+      this.setPaused(ctx, false);
+    } else if (act === PAUSE_SHOP) {
+      // Leaving for the workshop is not resuming: the word is not about to
+      // start again, so it is not spoken again. The shop pushes over a running
+      // game exactly as its chip does, and popping it drops the player back
+      // into play — which is what the button they pressed said it would do.
+      this.setPaused(ctx, false, false);
+      openShop();
+    }
+  }
+
+  /**
+   * The hedgehog sits down and waits.
+   *
+   * `player.ts` has no sitting state and is not this file's to change, so the
+   * pose is assembled from what the controller already does. Run him with the
+   * world stopped and his own curl hysteresis uncurls him out of the ball onto
+   * his paws; his stride is driven by distance rather than time, so it stops
+   * dead rather than scampering on the spot; the idle bob keeps him breathing.
+   * On top of that the squash spring is held a little compressed, which settles
+   * him down onto his haunches instead of leaving him standing to attention.
+   *
+   * Only the settled state is animated. Mid-dash, mid-hop and mid-knockback he
+   * is frozen exactly as he was: those are moves in flight, and letting one
+   * finish during a pause would lose the state the pause exists to keep.
+   */
+  private sitAndWait(ctx: Ctx, dt: number): void {
+    if (this.player.state !== 'run') return;
+    this.player.update(ctx, dt, 0, this.noDash);
+    this.player.stretch = damp(this.player.stretch, SIT_SQUASH, 5, dt);
   }
 
   /**
@@ -513,15 +701,28 @@ export class PlayScene implements Scene {
   // ------------------------------------------------------------------ input
 
   private handleInput(ctx: Ctx): void {
-    // The workshop is reachable from anywhere, including mid-word — nothing is
-    // lost by opening it, so there is no reason to gate it behind a phase.
+    // ESCAPE AND P NOW MEAN PAUSE, which is what they mean everywhere else and
+    // what a parent reaching over the child's shoulder will press. The workshop
+    // has not lost a door: it keeps its own chip, which is how touch and mouse
+    // always reached it, and the pause menu carries a WORKSHOP button so the
+    // keyboard still gets there in two presses.
     if (ctx.input.pausePressed) {
-      openShop();
+      this.setPaused(ctx, true);
       return;
     }
+    // Both screen controls are hit-tested BEFORE the field, so a column
+    // drifting behind one can never steal a press meant for it — and, more to
+    // the point, a tap meant for a letter can never be eaten by a control that
+    // would stop the game.
     this.layoutChip(ctx);
+    this.pauseBtn.layout(ctx, this.session.word.length);
     for (let i = 0; i < ctx.input.taps.length; i++) {
       const t = ctx.input.taps[i];
+      if (this.pauseBtn.hit(t.x, t.y)) {
+        this.pauseBtn.bump();
+        this.setPaused(ctx, true);
+        return;
+      }
       if (this.hitChip(t.x, t.y)) {
         ctx.audio.play('uiTap');
         openShop();
@@ -719,6 +920,17 @@ export class PlayScene implements Scene {
     this.field.dust(ctx, wall.x, GROUND_Y - 30);
   }
 
+  /**
+   * A wrong letter, or a column that got past.
+   *
+   * EASY MODE CHANGES WHAT IT COSTS, NEVER WHAT IT LOOKS LIKE. The knockback,
+   * the thud, the shake, the flash and the dust all still happen — that feedback
+   * is the teaching, and a mistake the game did not react to is a mistake the
+   * player does not learn from. What easy mode removes is the bill: no life, no
+   * points, no broken streak, and therefore no setback, because the counter that
+   * triggers one never moves. The miss is still counted for the word's mastery
+   * record, since that is a note about how the word went rather than a penalty.
+   */
   private registerMiss(ctx: Ctx, x: number, y: number, passedBy: boolean): void {
     const C = TUNING.scoring;
     const F = TUNING.feel;
@@ -728,14 +940,16 @@ export class PlayScene implements Scene {
     // prompt has not fired yet, it fires here.
     if (passedBy) this.raiseJumpHint();
 
-    this.combo = 0;
-    ctx.audio.resetCombo();
     this.misses++;
-    this.lives = Math.max(0, this.lives - 1);
+    if (!this.easy) {
+      this.combo = 0;
+      ctx.audio.resetCombo();
+      this.lives = Math.max(0, this.lives - 1);
 
-    const penalty = Math.min(this.score, C.missPenaltyPerTier * this.session.tier);
-    this.score -= penalty;
-    if (penalty > 0) this.addFloater(`-${penalty}`, x, y - 30, rgb(INK.danger), 30);
+      const penalty = Math.min(this.score, C.missPenaltyPerTier * this.session.tier);
+      this.score -= penalty;
+      if (penalty > 0) this.addFloater(`-${penalty}`, x, y - 30, rgb(INK.danger), 30);
+    }
 
     ctx.audio.play('bounce', 1);
     ctx.shake(passedBy ? F.shake.missPassed : F.shake.missHit, F.shake.missTime);
@@ -744,7 +958,7 @@ export class PlayScene implements Scene {
 
     this.field.dust(ctx, x, y);
 
-    if (this.lives <= 0) this.triggerSetback(ctx);
+    if (!this.easy && this.lives <= 0) this.triggerSetback(ctx);
   }
 
   /**
@@ -799,12 +1013,30 @@ export class PlayScene implements Scene {
       this.raiseNotice('GOAL', this.run.progressLabel(), NOTICE_INFO, 1.2);
     }
 
+    // What a word is worth to the profile depends on how it was played.
+    //
+    // Easy mode cannot break a combo, so the multiplier climbs to its cap and
+    // stays there, and no mistake ever takes anything back — left alone that is
+    // an unlimited spark tap and a rank ladder anyone can walk up by tapping
+    // wrong letters. So the two RECORDS are not touched at all in easy mode
+    // (a best score and a longest streak mean nothing if the penalties were
+    // off), and everything that accumulates — sparks and lifetime score — is
+    // banked at `TUNING.assist.easyEarnShare`. What is NOT discounted is the
+    // learning: the word counts, the letters count, and the mastery stats are
+    // recorded in full, because those milestones are about spelling and easy
+    // mode is exactly how a five-year-old gets to them. `easyWords` keeps the
+    // profile honest about how many were earned with the net up.
     const p = ctx.save.profile;
+    const share = earnShare(p);
     p.wordsCompleted++;
-    p.longestStreak = Math.max(p.longestStreak, this.bestCombo);
-    p.bestScore = Math.max(p.bestScore, this.score);
-    p.totalScore += bonus;
-    p.sparks += this.sparksEarned;
+    if (this.easy) {
+      p.easyWords++;
+    } else {
+      p.longestStreak = Math.max(p.longestStreak, this.bestCombo);
+      p.bestScore = Math.max(p.bestScore, this.score);
+    }
+    p.totalScore += Math.round(bonus * share);
+    p.sparks += Math.round(this.sparksEarned * share);
     this.sparksEarned = 0;
     this.session.recordCompletion(ctx, this.misses);
 
@@ -944,6 +1176,12 @@ export class PlayScene implements Scene {
     this.hud.draw(ctx, this.hudState());
     this.drawShopChip(ctx);
     this.drawJumpButton(ctx);
+    // The pause control sits on the word dock's baseline in the bottom-right
+    // corner — the one band of the frame no letter column ever reaches. It is
+    // drawn under the pause panel, which dims it along with everything else.
+    this.pauseBtn.layout(ctx, this.session.word.length);
+    this.pauseBtn.draw(ctx, this.paused, this.assistTag);
+    if (this.paused) this.pauseMenu.draw(ctx);
   }
 
   /**
@@ -1085,6 +1323,10 @@ export class PlayScene implements Scene {
       tier: this.session.tier,
       columnHeight: this.run.columnHeight,
       targetSpeed: this.targetSpeed,
+      paused: this.paused,
+      speedMul: this.speedMul,
+      scrollSpeed: this.scrollSpeed,
+      easy: this.easy,
     };
   }
 }

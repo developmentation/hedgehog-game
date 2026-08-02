@@ -638,40 +638,62 @@ export class Renderer {
     this.scaleStep = best;
   }
 
-  // Adaptive controller state. Frame times are collected into a fixed window
-  // and judged in bulk; no allocation happens per frame.
+  // Adaptive controller state. Frame times land in a fixed window and are
+  // judged in bulk; nothing here allocates per frame.
   private winMs = new Float32Array(24);
+  private winScratch = new Float32Array(24);
   private winN = 0;
+  private winSec = 0;
   private cooldown = 0;
-  /** Grows each time a step up had to be undone, so probing backs off. */
-  private upPenalty = 0;
-  /** Ladder step the controller has learned not to climb past. */
+  /**
+   * Finest ladder step the controller is currently allowed to climb to.
+   *
+   * Raised when a step up has to be undone, which is the only way to learn
+   * that a rung this machine cannot hold exists.
+   */
   private ceiling = 0;
+  /** How many times the ceiling has been hit; drives the retry backoff. */
+  private ceilFails = 0;
+  /** Seconds of comfortable frames accumulated while sitting at the ceiling. */
+  private quiet = 0;
+  /** Consecutive comfortable windows seen; a probe upward needs two. */
+  private upStreak = 0;
   private lastStepDir = 0;
   private sinceStep = 0;
 
   /**
    * Feed one frame's wall time to the adaptive controller.
    *
-   * Called once per rendered frame from the loop. The rules exist to make
-   * oscillation impossible rather than merely unlikely:
+   * Called once per rendered frame from the loop.
    *
-   *  - Decisions are made on a window of 24 frames, using the 70th percentile
-   *    rather than the mean, so one long frame (a smash, a GC) cannot move the
-   *    resolution and a genuinely overloaded frame rate cannot hide behind a
-   *    few fast frames.
-   *  - The two thresholds are far apart. Stepping down needs the p70 frame to
-   *    exceed the budget by 12%; stepping back up needs it to fit in 74% of
-   *    the budget *at the coarser scale*, which is roughly the headroom the
-   *    finer scale will actually need. Nothing sits in both bands.
-   *  - Every change starts a cooldown, and stepping up costs more cooldown
-   *    than stepping down, because a wrong step down is invisible for half a
-   *    second and a wrong step up is a stutter.
-   *  - If a step up is undone within two seconds it is recorded as a failure:
-   *    the penalty doubles and the ladder gains a ceiling, so the controller
-   *    stops re-probing a scale the machine has already refused. That is what
-   *    turns "hysteresis" into a guarantee — after two failed probes it simply
-   *    stops trying.
+   * The measurement is a window of 24 frames judged at its 70th percentile,
+   * not its mean: one long frame (a smash, a GC, a texture upload) must not
+   * move the resolution, and a genuinely overloaded frame rate must not be
+   * able to hide behind a handful of fast frames.
+   *
+   * Stepping DOWN needs p70 to overshoot the budget by 10%.
+   *
+   * Stepping UP needs p70 to fit inside the budget outright — not inside some
+   * fraction of it. That looks like too small a gap until you notice that
+   * displayed frame time is quantised by vsync: on a 60 Hz panel every healthy
+   * frame reads 16.67 ms, and a 58 fps target is a 17.24 ms budget, so a rule
+   * of the form "step up when p70 < 0.74 x budget" can never fire no matter
+   * how much headroom the GPU has. Under a refresh cap the only honest way to
+   * discover headroom is to spend some and see what happens. So the controller
+   * probes, and the safety is on the other side:
+   *
+   *  - a step up that has to be undone within two seconds is recorded as a
+   *    failure, which pins the ceiling at the rung below and forbids that
+   *    rung outright — so a boundary can produce at most ONE up-down pair, not
+   *    a cycle;
+   *  - re-probing above the ceiling only happens after a stretch of quiet
+   *    frames that doubles with every failure (20 s, 40 s, 80 s, capped at
+   *    two minutes), so a machine that genuinely cannot hold native settles
+   *    within a couple of seconds and then effectively stops trying, while one
+   *    whose load really did drop still finds its way back up;
+   *  - every change starts a cooldown, longer upward than downward, because a
+   *    needless step down is invisible for half a second and a needless step
+   *    up is a stutter.
    */
   tickScaler(dtSeconds: number): void {
     if (!this.autoScale) return;
@@ -679,19 +701,25 @@ export class Renderer {
     if (this.cooldown > 0) {
       this.cooldown -= dtSeconds;
       this.winN = 0;
+      this.winSec = 0;
       return;
     }
     const ms = dtSeconds * 1000;
-    // A tab restore or a breakpoint is not a frame rate signal.
+    // A tab restore or a debugger pause is not a frame rate signal.
     if (ms > 250) {
       this.winN = 0;
+      this.winSec = 0;
       return;
     }
     this.winMs[this.winN++] = ms;
+    this.winSec += dtSeconds;
     if (this.winN < this.winMs.length) return;
+    const elapsed = this.winSec;
     this.winN = 0;
+    this.winSec = 0;
 
-    // p70 by insertion sort into a scratch copy — 24 elements, no allocation.
+    // Percentiles by insertion sort into a scratch copy — 24 elements, in
+    // place, no allocation.
     const w = this.winScratch;
     w.set(this.winMs);
     for (let i = 1; i < w.length; i++) {
@@ -701,48 +729,90 @@ export class Renderer {
       w[j + 1] = v;
     }
     const p70 = w[Math.floor(w.length * 0.7)];
+    const p95 = w[Math.floor(w.length * 0.95)];
     const budget = 1000 / this.targetFps;
+    const last = this.scaleLadder.length - 1;
 
-    if (p70 > budget * 1.12 && this.scaleStep < this.scaleLadder.length - 1) {
-      if (this.lastStepDir > 0 && this.sinceStep < 2) {
-        // The step up we just took did not hold. Do not try that rung again.
-        this.upPenalty = this.upPenalty === 0 ? 1 : this.upPenalty * 2;
-        if (this.upPenalty > 16) this.upPenalty = 16;
-        this.ceiling = this.scaleStep;
-      }
+    if (p70 > budget * 1.1 && this.scaleStep < last) {
+      const undoing = this.lastStepDir > 0 && this.sinceStep < 2;
       this.scaleStep++;
       this.renderScale = this.scaleLadder[this.scaleStep];
+      if (undoing) {
+        // The rung we just tried does not hold on this machine under this
+        // load. Forbid it, and make the next probe much rarer.
+        this.ceiling = this.scaleStep;
+        this.ceilFails++;
+        this.quiet = 0;
+      }
       this.cooldown = 0.4;
       this.lastStepDir = -1;
       this.sinceStep = 0;
+      this.upStreak = 0;
       return;
     }
 
-    if (p70 < budget * 0.74 && this.scaleStep > this.ceiling) {
+    // Comfortable: hitting the target with no spikes worth worrying about.
+    const comfortable = p70 <= budget && p95 <= budget * 1.5;
+    if (!comfortable) {
+      this.quiet = 0;
+      this.upStreak = 0;
+      return;
+    }
+    // Two consecutive comfortable windows, not one. A single window is 24
+    // frames — about a third of a second — and on a machine whose spare GPU
+    // comes and goes (a background tab decoding video, another window
+    // compositing) one comfortable window is not evidence of headroom, it is
+    // evidence of a gap. Asking for two costs at most an extra third of a
+    // second before recovering and removes most of the needless probing.
+    if (++this.upStreak < 2) return;
+    this.upStreak = 0;
+    if (this.scaleStep > this.ceiling) {
       this.scaleStep--;
       this.renderScale = this.scaleLadder[this.scaleStep];
-      this.cooldown = 1.2 + this.upPenalty * 1.2;
+      this.cooldown = 1.2;
       this.lastStepDir = 1;
       this.sinceStep = 0;
+      return;
+    }
+    if (this.scaleStep > 0 && this.scaleStep === this.ceiling) {
+      this.quiet += elapsed;
+      const retry = Math.min(120, 20 * Math.pow(2, this.ceilFails - 1));
+      if (this.quiet >= retry) {
+        // Long enough with room to spare that the load has plausibly changed.
+        this.quiet = 0;
+        this.ceiling--;
+        this.scaleStep--;
+        this.renderScale = this.scaleLadder[this.scaleStep];
+        this.cooldown = 1.2;
+        this.lastStepDir = 1;
+        this.sinceStep = 0;
+      }
     }
   }
-
-  private winScratch = new Float32Array(24);
 
   /**
    * Forget what the controller has learned about this machine.
    *
-   * The ceiling and the probe penalty describe a load, not a device: once the
-   * heavy scene ends they are stale, and without a way to clear them the
-   * renderer would stay soft for the rest of the session. Called on resize and
-   * exposed for testing.
+   * The ceiling describes a load, not a device: once a heavy scene ends it is
+   * stale, and with no way to clear it the renderer would stay soft for the
+   * rest of the session. Called on resize and exposed for testing.
    */
   resetScaler(): void {
     this.ceiling = 0;
-    this.upPenalty = 0;
+    this.ceilFails = 0;
+    this.quiet = 0;
+    this.upStreak = 0;
     this.winN = 0;
-    this.cooldown = 0;
+    this.winSec = 0;
     this.lastStepDir = 0;
+    // Warm-up, and the reason it is not optional: the frames right after boot
+    // or a resize are the worst the session will ever produce — shader link,
+    // atlas upload, the first pass through every code path, and on resize a
+    // fresh backbuffer. Judged on those, the controller drops straight to the
+    // bottom of the ladder and the game opens soft on hardware that could have
+    // run it at native all along. Two seconds of silence costs nothing and
+    // removes the one input guaranteed to be unrepresentative.
+    this.cooldown = 2;
   }
 
   /**

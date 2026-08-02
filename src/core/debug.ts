@@ -20,6 +20,12 @@ export interface PerfSnapshot {
   atlasOccupancy: number;
   bakeMs: number;
   heapMb: number;
+  /** Fraction of device resolution the world pass is rasterising at. */
+  renderScale: number;
+  /** False once the scale has been pinned by hand or by a setting. */
+  autoScale: boolean;
+  /** Pixels the world pass actually shades, in millions. */
+  worldMpx: number;
 }
 
 export function attachDebug(ctx: Ctx, loop: Loop, meta: { bakeMs: number }): void {
@@ -56,6 +62,9 @@ export function attachDebug(ctx: Ctx, loop: Loop, meta: { bakeMs: number }): voi
     atlasOccupancy: ctx.atlas.occupancy,
     bakeMs: meta.bakeMs,
     heapMb: 0,
+    renderScale: 1,
+    autoScale: true,
+    worldMpx: 0,
   };
   (window as any).__perf = snap;
 
@@ -76,12 +85,19 @@ export function attachDebug(ctx: Ctx, loop: Loop, meta: { bakeMs: number }): voi
     snap.longFrames = s.longFrames;
     const mem = (performance as any).memory;
     snap.heapMb = mem ? mem.usedJSHeapSize / 1048576 : 0;
+    const r = ctx.r;
+    snap.renderScale = r.renderScale;
+    snap.autoScale = r.autoScale;
+    // The number that actually matters on a fill-bound frame: how many pixels
+    // the world pass rasterises before overdraw is counted at all.
+    snap.worldMpx = (r.canvas.width * r.canvas.height * r.renderScale * r.renderScale) / 1e6;
 
     if (visible) {
       el.textContent =
         `${s.fps.toFixed(0).padStart(3)} fps   step ${s.steps}\n` +
         `upd ${s.updateMs.toFixed(2)}ms  ren ${s.renderMs.toFixed(2)}ms\n` +
         `draws ${snap.drawCalls}  sprites ${snap.sprites}\n` +
+        `scale ${snap.renderScale.toFixed(2)}${snap.autoScale ? '' : ' pin'}  ${snap.worldMpx.toFixed(2)}Mpx -> ${(r.canvas.width / 1e3).toFixed(1)}k\n` +
         `long ${s.longFrames}  heap ${snap.heapMb.toFixed(1)}mb\n` +
         `atlas ${snap.atlasSize}px @${(snap.atlasOccupancy * 100).toFixed(0)}%  bake ${meta.bakeMs.toFixed(0)}ms`;
     }

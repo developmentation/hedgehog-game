@@ -44,7 +44,16 @@ export class Input {
   anyDown = false;
   /** Set on the frame a "confirm/any" input arrives (tap, space, enter). */
   anyPressed = false;
-  /** Set on the frame Escape or P is pressed. */
+  /**
+   * Set on the frame Escape or P is pressed.
+   *
+   * This is the PAUSE key, and only the pause key. It used to open the workshop
+   * from the play scene, which meant the one key every player already knows the
+   * meaning of did something else — so the shop keeps its own on-screen chip and
+   * a button on the pause panel, and Escape stops the world. A scene layered on
+   * top (the workshop, the pause panel) reads the same flag as "close me",
+   * which is the same gesture one level in.
+   */
   pausePressed = false;
   /**
    * Set on the frame a jump is asked for: Space, Up/W, or an upward flick.

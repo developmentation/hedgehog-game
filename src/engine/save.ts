@@ -33,9 +33,34 @@ export interface Profile {
   sparks: number;
   unlocked: string[];
   equipped: { skin: string; trail: string; spin: string };
-  settings: { muted: boolean; reducedMotion: boolean; highContrast: boolean; speechRate: number };
+  settings: {
+    muted: boolean;
+    reducedMotion: boolean;
+    highContrast: boolean;
+    speechRate: number;
+    /**
+     * Player-chosen world-speed multiplier — see `game/settings.ts` for the
+     * options and `TUNING.assist.speeds` for the numbers. Scales the scroll and,
+     * with it, wall spawning; never animation or input timing.
+     */
+    speed: number;
+    /**
+     * No-penalty mode: a wrong letter still bounces and still sounds, but costs
+     * no life, no points, no combo and can never trigger a setback.
+     */
+    easyMode: boolean;
+  };
   /** Per-word mastery, keyed by the word itself. */
   wordStats: Record<string, WordStat>;
+  /**
+   * Words completed while `settings.easyMode` was on.
+   *
+   * Kept apart from `wordsCompleted` as the honest record of how the run was
+   * played: easy words still count as practice (they advance the word
+   * milestones, which are about learning) but the profile can always say how
+   * many of them were earned with the penalties off.
+   */
+  easyWords: number;
   lastPlayed: number;
 }
 
@@ -50,11 +75,23 @@ export function emptyProfile(): Profile {
     sparks: 0,
     unlocked: ['skin/classic', 'trail/none', 'spin/classic'],
     equipped: { skin: 'skin/classic', trail: 'trail/none', spin: 'spin/classic' },
-    settings: { muted: false, reducedMotion: false, highContrast: false, speechRate: 0.86 },
+    settings: {
+      muted: false,
+      reducedMotion: false,
+      highContrast: false,
+      speechRate: 0.86,
+      speed: 1,
+      easyMode: false,
+    },
     wordStats: {},
+    easyWords: 0,
     lastPlayed: 0,
   };
 }
+
+/** Widest multiplier a stored profile may ask the world to scroll at. */
+const SPEED_MIN = 0.5;
+const SPEED_MAX = 1.5;
 
 function openDb(): Promise<IDBDatabase | null> {
   return new Promise((resolve) => {
@@ -113,8 +150,19 @@ export class SaveStore {
       settings: { ...base.settings, ...(p.settings ?? {}) },
       wordStats: p.wordStats ?? {},
       unlocked: Array.from(new Set([...base.unlocked, ...(p.unlocked ?? [])])),
+      easyWords: Math.max(0, Math.round(p.easyWords ?? 0)) || 0,
       version: DB_VERSION,
     };
+    // A stored setting is data from outside this build: a profile written by an
+    // older version has no speed at all, and a hand-edited one can hold
+    // anything. The scroll multiplier is the one setting that would make the
+    // game unplayable if it arrived as NaN or 40, so it is clamped on the way in
+    // rather than trusted on the way out.
+    const s = merged.settings;
+    s.speed = Number.isFinite(s.speed)
+      ? Math.min(SPEED_MAX, Math.max(SPEED_MIN, s.speed))
+      : 1;
+    s.easyMode = !!s.easyMode;
     return merged;
   }
 

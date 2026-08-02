@@ -74,9 +74,12 @@
  * better off spending it on `setbackCost` or a slower `pacing`.
  *
  * ---------------------------------------------------------------- theme ----
- * A name for a background/prop set. Carried through to `probe().theme` and
- * ignored by anything that does not recognise it, so an unknown or absent
- * theme is simply the default scene — never a boot failure.
+ * The name of a backdrop set defined in `themes.ts` — `meadow`, `winter` or
+ * `cave` today. Starting a `LevelRun` publishes it (see `activeThemeId`) and
+ * `parallax.ts` rebuilds the whole backdrop from that theme's descriptor.
+ *
+ * An unknown, misspelled or absent theme resolves to `meadow`, so a level can
+ * always name one speculatively: a theme is a decoration, never a boot failure.
  *
  * ============================================================================
  * WHAT LIVES HERE VS IN tuning.ts
@@ -133,8 +136,28 @@ export interface LevelDef {
   goal: LevelGoal;
   /** Optional: how forgiving this level is. */
   rules?: LevelRules;
-  /** Optional theming hook — a named background/prop set. Degrades to default. */
+  /** Optional: a backdrop set from `themes.ts`. Degrades to `meadow`. */
   theme?: string;
+}
+
+/**
+ * The theme the live run asked for.
+ *
+ * `parallax.ts` is constructed by the play scene long before a level is chosen
+ * and is never handed the run, so this is how a level's choice of backdrop
+ * reaches it: one string, published by whoever last started a run, polled by
+ * the backdrop. Deliberately a signal and not a callback — the backdrop decides
+ * when it can afford to rebuild, and nothing in the level model has to know
+ * that a renderer exists.
+ *
+ * `startLevel` is the only place a `LevelRun` is built for play, and it always
+ * builds one *last* (the systems it configures hold the same object), so the
+ * final write before any frame is drawn is always the live level's.
+ */
+let activeTheme = 'default';
+
+export function activeThemeId(): string {
+  return activeTheme;
 }
 
 /**
@@ -241,6 +264,7 @@ export class LevelRun {
 
   constructor(def: LevelDef) {
     this.config = resolveLevel(def);
+    activeTheme = this.config.theme;
   }
 
   /** The tier words are currently drawn from. */
@@ -343,6 +367,7 @@ export const LEVELS: readonly LevelDef[] = [
     words: { tiers: [1, 2, 3, 4, 5] },
     pacing: { startSpeed: 256, endSpeed: 360, rampWords: 4, columnHeight: [2, 5], decoyBias: 0 },
     goal: { kind: 'endless' },
+    theme: 'meadow',
   },
 
   /**
@@ -362,6 +387,10 @@ export const LEVELS: readonly LevelDef[] = [
    * A themed run: the ocean shelf of the bank, mid tiers only. The decoy bias
    * is up, so a third of the wrong letters come from outside the word — the
    * first level where reading the column is work.
+   *
+   * Set in the winter theme rather than the meadow: there is no ocean backdrop
+   * to ask for, and of the three that exist the snowfield is the one whose
+   * whole palette is the cold blue this level is named after.
    */
   {
     id: 'deep-blue',
@@ -369,7 +398,7 @@ export const LEVELS: readonly LevelDef[] = [
     words: { topics: ['ocean'], tiers: [2, 3, 4] },
     pacing: { startSpeed: 240, endSpeed: 300, rampWords: 6, columnHeight: [3, 4], decoyBias: 0.35 },
     goal: { kind: 'words', target: 6 },
-    theme: 'ocean',
+    theme: 'winter',
   },
 
   /**
@@ -385,7 +414,7 @@ export const LEVELS: readonly LevelDef[] = [
     pacing: { startSpeed: 225, endSpeed: 265, rampWords: 3, columnHeight: [4, 5], decoyBias: 0.6 },
     goal: { kind: 'words', target: 3 },
     rules: { setbackCost: 0.05 },
-    theme: 'cavern',
+    theme: 'cave',
   },
 
   /**
@@ -401,7 +430,7 @@ export const LEVELS: readonly LevelDef[] = [
     pacing: { startSpeed: 330, endSpeed: 430, rampWords: 4, columnHeight: [2, 3], decoyBias: 0.2 },
     goal: { kind: 'score', target: 2500 },
     rules: { allowJump: false, lives: 2 },
-    theme: 'dusk',
+    theme: 'meadow',
   },
 ];
 

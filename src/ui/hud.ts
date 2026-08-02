@@ -194,7 +194,20 @@ export const HUD_EDGE_X = EDGE_X;
  */
 const STRIP_H = 84;
 const STRIP_RAD = 42;
-const STRIP_BODY_A = 0.99;
+/**
+ * Panel opacity.
+ *
+ * The panels that carry text are fully opaque, deliberately. The reported
+ * HUD "flicker" was measured and is not the HUD: frozen, it renders
+ * bit-identical frame to frame (mean delta 0.000, max 0). With the world
+ * scrolling, 8-31% of pixels inside the same boxes change every frame — the
+ * painted backdrop read through translucent plates. Caching cannot remove
+ * that, because the pixels that change are the world, not the interface.
+ *
+ * Rings, shadows and the speaker gloss stay translucent; they are edges and
+ * highlights, not reading surfaces.
+ */
+const STRIP_BODY_A = 1;
 const STRIP_RING_A = 0.3;
 const STRIP_SHADOW_A = 0.42;
 
@@ -548,7 +561,7 @@ export class Hud {
     // full-size panel, which is the same composite for a third of the fill.
     this.scrim(ctx, L.cx, plaqueCY + 10, plaqueW * 1.16, plaqueH * 2.1, 0.62);
     plateShadow(ctx, L.cx, plaqueCY, plaqueW, plaqueH, PLAQUE_RAD, 7, C_DARK, 0.3);
-    const plaqueA = mergeShadow(C_PANEL, 0.8, C_DARK, 0.3, MERGED);
+    const plaqueA = mergeShadow(C_PANEL, 1, C_DARK, 0.3, MERGED);
     plate(ctx, L.cx, plaqueCY, plaqueW, plaqueH, PLAQUE_RAD, MERGED, plaqueA);
     plateRing(ctx, L.cx, plaqueCY, plaqueW, plaqueH, PLAQUE_RAD, C_PAPER, 0.2);
 
@@ -860,7 +873,7 @@ export class Hud {
     const acc = ACCENT;
 
     plateShadow(ctx, cx, cy, w, h, h / 2, 7, C_DARK, 0.4);
-    const badgeA = mergeShadow(C_PANEL, 0.99, C_DARK, 0.4, MERGED);
+    const badgeA = mergeShadow(C_PANEL, 1, C_DARK, 0.4, MERGED);
     plate(ctx, cx, cy, w, h, h / 2, MERGED, badgeA);
     plateRing(ctx, cx, cy, w, h, h / 2, acc, 0.5 + heat * 0.45);
 
@@ -1027,7 +1040,7 @@ export class Hud {
     // lip is drawn; the sliver that used to tint the card's interior is folded
     // into the card's own colour.
     plateShadow(ctx, cx, cy, w, h, rad, 14, C_DARK, 0.4 * fade);
-    const cardA = mergeShadow(C_PANEL, 0.95 * fade, C_DARK, 0.4 * fade, MERGED);
+    const cardA = mergeShadow(C_PANEL, 1 * fade, C_DARK, 0.4 * fade, MERGED);
     plate(ctx, cx, cy, w, h, rad, MERGED, cardA);
 
     // Header band: rounded at the top, squared where it meets the body.
@@ -1134,7 +1147,7 @@ export class Hud {
     if (alpha > 0.3) this.markCard(L.cx, cy, w, h);
     this.scrim(ctx, L.cx, cy, w * 1.5, h * 2.4, 0.55 * alpha);
     plateShadow(ctx, L.cx, cy, w, h, 34, 10, C_DARK, 0.45 * alpha);
-    const noticeA = mergeShadow(C_PANEL, 0.97 * alpha, C_DARK, 0.45 * alpha, MERGED);
+    const noticeA = mergeShadow(C_PANEL, 1 * alpha, C_DARK, 0.45 * alpha, MERGED);
     plate(ctx, L.cx, cy, w, h, 34, MERGED, noticeA);
     plateRing(ctx, L.cx, cy, w, h, 34, accent, 0.8 * alpha);
 

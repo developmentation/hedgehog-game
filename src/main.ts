@@ -204,6 +204,33 @@ async function boot(): Promise<void> {
     return `grade exposure=${e} saturation=${sat}`;
   };
 
+  // Live render-scale control.
+  //
+  //   window.__renderScale()       -> report, and hand control back to auto
+  //   window.__renderScale(0.6)    -> pin the world pass at 60% of device res
+  //   window.__renderScale('auto') -> same as no argument
+  //   window.__renderScale(1, 45)  -> auto off at native, target 45 fps
+  //
+  // The second argument sets the adaptive target, which is also the honest way
+  // to force the controller to work on a machine that is not struggling: ask
+  // for a frame rate the display cannot reach and watch it walk the ladder
+  // down, then ask for a reachable one and watch it walk back up.
+  (window as any).__renderScale = (s?: number | string, targetFps?: number) => {
+    if (typeof targetFps === 'number' && targetFps > 0) r.targetFps = targetFps;
+    if (s === undefined || s === 'auto') {
+      r.setRenderScale(null);
+      r.resetScaler();
+    } else if (typeof s === 'number') {
+      r.setRenderScale(s);
+    }
+    return {
+      renderScale: r.renderScale,
+      auto: r.autoScale,
+      targetFps: r.targetFps,
+      devicePixels: `${Math.round(r.canvas.width * r.renderScale)}x${Math.round(r.canvas.height * r.renderScale)} of ${r.canvas.width}x${r.canvas.height}`,
+    };
+  };
+
   // Diagnostic: window.__raw(true) draws the art with no tints, washes,
   // vignette, flash or hero separation passes at all.
   (window as any).__raw = (on = true) => {

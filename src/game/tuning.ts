@@ -264,6 +264,43 @@ export const TUNING = {
     sparkShareWord: 0.3,
   },
 
+  /**
+   * Accessibility: the two settings the player owns rather than the designer.
+   *
+   * Both are deliberately *outside* the level model. A `LevelDef` says how hard
+   * the game intends to be; these say how much of that intent the person at the
+   * controls wants to take today, and they persist across sessions in
+   * `Profile.settings` (see `game/settings.ts` for the labels the menu shows).
+   */
+  assist: {
+    /**
+     * World-speed multipliers, slowest first. Applied to the scroll — and
+     * therefore to wall spawning, which is paced by distance — and to nothing
+     * else. Dash timing, the hop, hit-stop, the clue hold and every input
+     * window stay exactly as tuned, so the slow settings buy reading time
+     * without making the character feel like he is wading.
+     *
+     * The floor is 0.6: at the first tier that is 154 units/sec, which gives a
+     * five-year-old roughly four seconds per column instead of two and a half.
+     * The ceiling is 1.25 — beyond it the top tier passes 450 units/sec, which
+     * is past the point where a column can be read at all.
+     */
+    speeds: [0.6, 0.8, 1, 1.25],
+    /** Index into `speeds` a fresh profile starts on. */
+    defaultSpeed: 2,
+    /**
+     * Share of sparks and lifetime score an easy-mode word banks.
+     *
+     * Easy mode removes every cost of a mistake, so a word spelled in it is not
+     * the same achievement as one spelled without the net — and with the combo
+     * unbreakable the multiplier climbs to its cap and stays there. Earnings are
+     * therefore discounted rather than the mode being walled off from the
+     * economy: a child playing on easy still watches the sparks come in and can
+     * still buy the pink hedgehog, it just takes the time it should.
+     */
+    easyEarnShare: 0.4,
+  },
+
   /** Camera lead and lift. Small numbers here; the effect is felt, not seen. */
   camera: {
     zoomBase: 1,

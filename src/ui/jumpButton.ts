@@ -168,7 +168,11 @@ export class JumpButton {
     // part that did show through the translucent body is premixed into the
     // body's colour, which composites identically for one plate instead of two.
     const shadowA = 0.4 * (0.5 + on * 0.5);
-    const bodyA = 0.72 + on * 0.2;
+    // Opaque. The disc carries the JUMP label, so it is a reading surface: at
+    // 0.72-0.92 the scrolling world showed through it and 29.5% of its pixels
+    // changed every frame. Availability is now read from the ring and the
+    // caret, which is where it belongs, rather than from the body fading out.
+    const bodyA = 1;
     plateShadow(ctx, bx, by, d, d, rad, 7, C_DARK, shadowA);
     const mergedA = mergeShadow(C_PANEL, bodyA, C_DARK, shadowA, MERGED);
     plate(ctx, bx, by, d, d, rad, MERGED, mergedA);
