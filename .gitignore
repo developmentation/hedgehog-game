@@ -6,3 +6,6 @@ captures/
 art-src/raw/
 art-src/_*.png
 art-src/contact-sheet.png
+dist/
+node_modules/
+*.zip
