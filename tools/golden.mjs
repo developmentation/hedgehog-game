@@ -283,7 +283,10 @@ async function capture(browser, shot) {
     // load rather than a wait for it, and nothing pins it to the load's actual
     // cost. `whenComplete()` resolves when every manifest asset is resident,
     // so the harness now waits on the condition it actually depends on.
-    await page.evaluate(() => window.__game.ctx.assets.whenComplete());
+    // Optional call: the guard has to be able to photograph older commits than
+    // itself, and `whenComplete` postdates some of them. Bisecting a visual
+    // regression means running today's harness against yesterday's build.
+    await page.evaluate(() => window.__game.ctx.assets.whenComplete?.());
     await sleep(200);
 
     await page.evaluate(
