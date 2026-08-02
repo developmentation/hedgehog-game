@@ -1569,7 +1569,12 @@ export class Player {
         // Nose up off the launch, nose down into the landing.
         return clamp(-this.vy / 5200, -FACE_TILT, FACE_TILT);
       default:
-        if (this.curled) return clamp(this.scroll / 1200, 0, 0.11);
+        // Curled: the ball ROLLS. This was clamped to 0.11 rad (6 degrees) to stop
+      // the painted face tumbling, back when a separate faceless wheel sprite was
+      // composited on top to carry the spin. That wheel is gone, so the clamp left
+      // a static hedgehog with translucent copies rotating around it. A rolling
+      // ball rotates; the face going round with it is what rolling looks like.
+      if (this.curled) return this.spinAngle;
         // Scampering: lean into the speed. The stride-synced shoulder roll that
         // used to sit on top of this was another way of faking motion on a
         // still sprite; the painted cycle carries it, so it only survives on
@@ -1589,6 +1594,10 @@ export class Player {
    * flight it hands over to the body's own angle so the wheel and the stretched
    * silhouette it sits inside stay on one axis; everywhere else it is the raw
    * spin, which is damped against the world's speed and so can never skid.
+   */
+  /**
+   * Formerly the independent shell angle. Now simply the body's own roll, so a
+   * smear copy can never sit 300 degrees away from the sprite it is smearing.
    */
   private wheelRot(): number {
     const T = TUNING.dash;
@@ -2241,8 +2250,8 @@ export class Player {
     // so it cannot spill a halo the way a glow sprite would — which lifts him
     // clear of the backdrop's own mid-tones without the multiplicative gain
     // having to be pushed far enough to blow the painted highlights out.
-    const bloom = HERO_BLOOM + lit * DANCE_BLOOM;
-    r.draw(f, this.x, cy, sx * this.poseFlip, sy, rot, bloom, bloom * 0.84, bloom * 0.6, 1);
+    // The additive value-floor pass is gone: it was a seventh full-size copy of
+    // the same sprite drawn every frame for a contribution of about 2%.
 
     r.setBlend(Blend.Normal);
   }
