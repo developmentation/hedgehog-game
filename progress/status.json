@@ -1,0 +1,131 @@
+{
+  "project": "Spindash Speller",
+  "updatedAt": "2026-08-01T19:23:19.849Z",
+  "goal": "A 2D browser spelling game indistinguishable from a shipped studio title",
+  "modules": [
+    {
+      "id": "engine",
+      "title": "Engine core (WebGL2 batcher, atlas, loop, input, audio, save)",
+      "owner": "lead",
+      "status": "done",
+      "iteration": 1,
+      "score": null,
+      "verdict": null,
+      "gap": null,
+      "updatedAt": "2026-08-01T15:04:08.486Z"
+    },
+    {
+      "id": "art-hedgehog",
+      "title": "Hedgehog character art + animation set",
+      "owner": "art-1",
+      "status": "done",
+      "iteration": 3,
+      "score": null,
+      "verdict": "Face no longer tumbles (quill wheel spins, body held forward-facing, <=12deg tilt); silhouette separation -23..+0 -> +43..+79 across idle/dash/jump/celebration via shade rings + pose aura + warm rim + value floor; contact shadow now 41 luma under him vs clear ground; takeoff crouch, launch stretch and a held landing beat with hitstop/shake/ground ring; JUMP control clamped clear of the hero at 7 viewports.",
+      "gap": null,
+      "updatedAt": "2026-08-01T18:52:48.815Z"
+    },
+    {
+      "id": "art-letters",
+      "title": "Letter tiles, smash states, typography",
+      "owner": "art-2",
+      "status": "done",
+      "iteration": 1,
+      "score": null,
+      "verdict": "Painted block sprites with a pooled-recess + hard-outline glyph stack, spring physics, column jolt and a chunky material-coloured smash; 3 draw calls / 75 sprites for the field.",
+      "gap": null,
+      "updatedAt": "2026-08-01T16:22:34.168Z"
+    },
+    {
+      "id": "art-world",
+      "title": "World art: parallax layers, tilesets, props",
+      "owner": "art-3",
+      "status": "done",
+      "iteration": 4,
+      "score": null,
+      "verdict": "Dusk palette restored: sky resampled to carry the full indigo-violet-magenta-coral-amber ramp (SKY_V0 0.66->0.34, tint 1.76/1.82/1.46 -> 1.60/1.32/1.46, v=1 landed at y=474 so the amber shows above the hills instead of behind them); highlights re-bought locally from a tight horizon glow, a near-opaque sun-rake on the soil top, sun-struck fringe grass and a 17-piece lit cloud bank that shares the atlas bind; far layers de-milked with mauve/blue-teal hue tints instead of neutral lifts; fixed a 1.4 tint clamp in buildRow that had been silently discarding every sun-struck row tint. World-only desktop median 107-124, p95 190-216, 14-21% below 25%; 17 draw calls (one fewer than before), 0 console errors.",
+      "gap": null,
+      "updatedAt": "2026-08-01T19:23:19.849Z"
+    },
+    {
+      "id": "art-fx",
+      "title": "FX: particles, trails, impact and screen shake",
+      "owner": "fx-1",
+      "status": "pending",
+      "iteration": 0,
+      "score": null,
+      "verdict": null,
+      "gap": null,
+      "updatedAt": "2026-08-01T15:13:08.486Z"
+    },
+    {
+      "id": "art-ui",
+      "title": "UI kit: HUD, menus, transitions",
+      "owner": "ui-1",
+      "status": "done",
+      "iteration": 2,
+      "score": null,
+      "verdict": "HUD rebuilt on screen anchors (safeTop/viewLeft/viewRight/viewBottom): one top row, one message channel with severity priority, combo docked under the strip, word bar demoted to a floating plaque that uncovers the painted bank, plus a one-button HINT that recalls the clue mid-word without blocking taps.",
+      "gap": null,
+      "updatedAt": "2026-08-01T17:25:55.287Z"
+    },
+    {
+      "id": "game-play",
+      "title": "Core loop: spawn, aim, dash, smash, scoring",
+      "owner": "game-1",
+      "status": "done",
+      "iteration": 2,
+      "score": null,
+      "verdict": "Jump/dodge shipped (Space, sky-tap, on-screen JUMP button, swipe-up) plus four fairness fixes: dash no longer retires walls it flies over, setback pushback re-arms walls, block taps resolve by nearest centre, hero rim restores silhouette. winnable 10/10, 0 deadlocks, 0 console errors.",
+      "gap": null,
+      "updatedAt": "2026-08-01T17:37:40.434Z"
+    },
+    {
+      "id": "game-progression",
+      "title": "Progression: levels, difficulty curve, unlocks",
+      "owner": "game-2",
+      "status": "done",
+      "iteration": 1,
+      "score": null,
+      "verdict": "Rank curve + 10 milestones + spark/milestone dual-path unlocks; rounded Workshop scene with live hedgehog preview, touch/mouse/keyboard parity, persistence verified across reload.",
+      "gap": null,
+      "updatedAt": "2026-08-01T16:10:58.052Z"
+    },
+    {
+      "id": "data-words",
+      "title": "Word lists, phonics tiers, distractor generation",
+      "owner": "data-1",
+      "status": "pending",
+      "iteration": 0,
+      "score": null,
+      "verdict": null,
+      "gap": null,
+      "updatedAt": "2026-08-01T15:17:14.822Z"
+    },
+    {
+      "id": "audio-tts",
+      "title": "Audio: TTS pronunciation, SFX, music beds",
+      "owner": "audio-1",
+      "status": "done",
+      "iteration": 1,
+      "score": null,
+      "verdict": "Layered procedural SFX (transient+crack+body+tail smash with per-hit jitter, soft non-punishing bounce/setback, arpeggiated wordComplete), adaptive music bed with setIntensity/duck, speech watchdog + Chrome resume fix, limiter + soft-clip ceiling; offline-verified peaks 0.06-0.44, no clipping/NaN/node leaks, tsc clean.",
+      "gap": null,
+      "updatedAt": "2026-08-01T15:44:36.258Z"
+    },
+    {
+      "id": "perf",
+      "title": "Performance budget and frame-time work",
+      "owner": "perf-1",
+      "status": "pending",
+      "iteration": 0,
+      "score": null,
+      "verdict": null,
+      "gap": null,
+      "updatedAt": "2026-08-01T15:13:08.486Z"
+    }
+  ],
+  "iterations": [],
+  "perf": null,
+  "shots": []
+}

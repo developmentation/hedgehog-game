@@ -1,0 +1,880 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Spindash Speller — build status</title>
+<style>
+/* ------------------------------------------------------------------ theme */
+:root {
+  color-scheme: dark;
+
+  --bg:          #0d0d0d;
+  --surface:     #1a1a19;
+  --surface-2:   #212120;
+  --line:        #2c2c2a;
+  --line-strong: #383835;
+  --ink:         #ffffff;
+  --ink-2:       #c3c2b7;
+  --ink-3:       #898781;
+
+  --accent:      #3987e5;
+  --accent-soft: rgba(57, 135, 229, 0.16);
+
+  --ok:       #0ca30c;
+  --ok-ink:   #0ca30c;
+  --warn:     #fab219;
+  --serious:  #ec835a;
+  --crit:     #d03b3b;
+  --builder:  #3987e5;
+  --critic:   #d95926;
+
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.02);
+  --wash:   rgba(255, 255, 255, 0.04);
+
+  /* 8px grid */
+  --s1: 8px; --s2: 16px; --s3: 24px; --s4: 32px; --s5: 48px;
+
+  /* type scale */
+  --fs-micro: 0.6875rem;  /* 11 */
+  --fs-small: 0.75rem;    /* 12 */
+  --fs-body:  0.8125rem;  /* 13 */
+  --fs-lead:  0.9375rem;  /* 15 */
+  --fs-h2:    1.125rem;   /* 18 */
+  --fs-h1:    1.5rem;     /* 24 */
+  --fs-stat:  1.75rem;    /* 28 */
+
+  --radius: 10px;
+  --ease: cubic-bezier(0.2, 0.6, 0.3, 1);
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+
+    --bg:          #f9f9f7;
+    --surface:     #fcfcfb;
+    --surface-2:   #f4f3ef;
+    --line:        #e1e0d9;
+    --line-strong: #c3c2b7;
+    --ink:         #0b0b0b;
+    --ink-2:       #52514e;
+    --ink-3:       #898781;
+
+    --accent:      #2a78d6;
+    --accent-soft: rgba(42, 120, 214, 0.12);
+
+    --ok-ink:  #006300;
+    --critic:  #eb6834;
+    --builder: #2a78d6;
+
+    --shadow: 0 1px 2px rgba(11, 11, 11, 0.06), 0 0 0 1px rgba(11, 11, 11, 0.04);
+    --wash:   rgba(11, 11, 11, 0.03);
+  }
+}
+
+/* ------------------------------------------------------------------ reset */
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 400 var(--fs-body)/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+img { max-width: 100%; display: block; }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+h1, h2, h3, p, ul, ol, figure { margin: 0; }
+ul, ol { list-style: none; padding: 0; }
+.num { font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }
+
+/* ---------------------------------------------------------------- shell */
+.wrap {
+  max-width: 1360px;
+  margin: 0 auto;
+  padding: var(--s3) var(--s3) var(--s5);
+}
+@media (max-width: 640px) { .wrap { padding: var(--s2) var(--s2) var(--s4); } }
+
+/* ---------------------------------------------------------------- header */
+.top {
+  position: sticky; top: 0; z-index: 20;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--line);
+}
+.top-in {
+  max-width: 1360px; margin: 0 auto;
+  padding: var(--s2) var(--s3);
+  display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap;
+}
+@media (max-width: 640px) { .top-in { padding: var(--s2); gap: var(--s2); } }
+
+.brand { display: flex; align-items: baseline; gap: var(--s1); flex-wrap: wrap; }
+.brand h1 {
+  font-size: var(--fs-h1); font-weight: 600; letter-spacing: -0.015em; line-height: 1.2;
+}
+.brand .tag {
+  font-size: var(--fs-micro); letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--ink-3); border: 1px solid var(--line-strong);
+  border-radius: 999px; padding: 2px 8px;
+}
+.goal {
+  color: var(--ink-2); font-size: var(--fs-body); max-width: 46ch; line-height: 1.5;
+  margin-top: 2px;
+}
+.top-meta {
+  margin-left: auto; display: flex; align-items: center; gap: var(--s3);
+  flex-wrap: wrap; min-width: 0;
+}
+@media (max-width: 860px) {
+  .top-meta { margin-left: 0; width: 100%; justify-content: space-between; gap: var(--s2); }
+}
+
+.stamp { text-align: right; }
+.stamp .k {
+  font-size: var(--fs-micro); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3);
+}
+.stamp .v { font-size: var(--fs-lead); color: var(--ink); }
+.conn {
+  display: none; align-items: center; gap: 6px;
+  font-size: var(--fs-micro); color: var(--serious); margin-top: 2px;
+  justify-content: flex-end;
+}
+body[data-conn="off"] .conn { display: flex; }
+body[data-conn="off"] .stamp .v { color: var(--ink-3); }
+.conn .pulse {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--serious);
+  animation: pulse 1.4s var(--ease) infinite;
+}
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+
+/* progress ring */
+.ring { display: flex; align-items: center; gap: var(--s2); min-width: 0; }
+.ring svg { width: 60px; height: 60px; display: block; flex: none; }
+.ring .track { stroke: var(--line); }
+.ring .fill {
+  stroke: var(--accent); stroke-linecap: round;
+  transition: stroke-dashoffset 600ms var(--ease);
+}
+.ring .pct {
+  font-size: var(--fs-lead); font-weight: 600; fill: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.ring-side .k {
+  font-size: var(--fs-micro); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3);
+}
+.ring-side .v { font-size: var(--fs-body); color: var(--ink-2); }
+
+/* ------------------------------------------------------------ section head */
+.sec { margin-top: var(--s4); }
+.sec-head {
+  display: flex; align-items: baseline; gap: var(--s2);
+  margin-bottom: var(--s2); padding-bottom: var(--s1);
+  border-bottom: 1px solid var(--line);
+}
+.sec-head h2 {
+  font-size: var(--fs-h2); font-weight: 600; letter-spacing: -0.01em;
+}
+.sec-head .count { font-size: var(--fs-small); color: var(--ink-3); margin-left: auto; }
+
+/* --------------------------------------------------------------- cards */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+/* -------------------------------------------------------------- modules */
+.modules {
+  display: grid; gap: var(--s2); align-items: start;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+}
+@media (max-width: 640px) { .modules { grid-template-columns: 1fr; } }
+
+.mod {
+  padding: var(--s2);
+  display: flex; flex-direction: column; gap: var(--s1);
+  position: relative; overflow: hidden;
+  transition: border-color 400ms var(--ease), background-color 400ms var(--ease);
+}
+.mod::before {
+  content: ""; position: absolute; inset: 0 auto 0 0; width: 2px;
+  background: var(--st); opacity: 0.9;
+  transition: background-color 400ms var(--ease);
+}
+.mod[data-status="pending"] { --st: var(--line-strong); }
+.mod[data-status="building"] { --st: var(--accent); }
+.mod[data-status="critiquing"] { --st: var(--warn); }
+.mod[data-status="done"] { --st: var(--ok); }
+.mod[data-status="blocked"] { --st: var(--crit); }
+.mod[data-status="pending"] .mod-title { color: var(--ink-2); }
+
+.mod-top { display: flex; align-items: flex-start; gap: var(--s1); }
+.mod-title {
+  font-size: var(--fs-lead); font-weight: 600; line-height: 1.35; letter-spacing: -0.005em;
+  transition: color 400ms var(--ease);
+}
+.pill {
+  flex: none; margin-left: auto;
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: var(--fs-micro); letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--ink-2);
+  border: 1px solid var(--line-strong); border-radius: 999px;
+  padding: 3px 9px 3px 7px; white-space: nowrap;
+  background: var(--surface-2);
+  transition: border-color 400ms var(--ease), color 400ms var(--ease);
+}
+.pill .dot {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--st); flex: none;
+  transition: background-color 400ms var(--ease);
+}
+.mod[data-status="building"] .pill,
+.mod[data-status="critiquing"] .pill,
+.mod[data-status="blocked"] .pill { color: var(--ink); border-color: var(--st); }
+.mod[data-status="done"] .pill { color: var(--ok-ink); border-color: color-mix(in srgb, var(--ok) 55%, transparent); }
+.mod[data-status="building"] .pill .dot { animation: breathe 2s var(--ease) infinite; }
+@keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+.mod-meta {
+  display: flex; align-items: center; gap: var(--s1);
+  font-size: var(--fs-small); color: var(--ink-3);
+}
+.mod-meta .sep { width: 3px; height: 3px; border-radius: 50%; background: var(--line-strong); }
+
+.score-row { display: flex; align-items: center; gap: var(--s1); margin-top: 2px; }
+.score-row .k {
+  font-size: var(--fs-micro); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3);
+}
+.score-row .v { font-size: var(--fs-lead); font-weight: 600; }
+.meter {
+  flex: 1; height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; min-width: 60px;
+}
+.meter i {
+  display: block; height: 100%; width: 0; background: var(--accent); border-radius: 2px;
+  transition: width 600ms var(--ease);
+}
+.verdict {
+  font-size: var(--fs-body); color: var(--ink-2); line-height: 1.5;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.gap {
+  margin-top: 2px; padding: var(--s1) var(--s1) var(--s1) 10px;
+  border-left: 2px solid var(--serious);
+  background: color-mix(in srgb, var(--serious) 9%, transparent);
+  border-radius: 0 6px 6px 0;
+}
+.gap .k {
+  display: block; font-size: var(--fs-micro); letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--serious); margin-bottom: 1px;
+}
+.gap .v { font-size: var(--fs-body); color: var(--ink); line-height: 1.45; }
+.hide { display: none !important; }
+
+/* --------------------------------------------------------------- columns */
+.cols {
+  margin-top: var(--s4);
+  display: grid; gap: var(--s3);
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  align-items: start;
+}
+@media (max-width: 1000px) { .cols { grid-template-columns: minmax(0, 1fr); } }
+.cols .sec { margin-top: 0; }
+.cols .sec + .sec { margin-top: var(--s4); }
+
+/* -------------------------------------------------------------- timeline */
+.tl { display: flex; flex-direction: column; }
+.tl li {
+  display: grid; grid-template-columns: 76px minmax(0, 1fr) auto; gap: var(--s2);
+  padding: var(--s2) 0; border-bottom: 1px solid var(--line);
+  align-items: baseline;
+}
+.tl li:last-child { border-bottom: 0; }
+@media (max-width: 560px) {
+  .tl li { grid-template-columns: minmax(0, 1fr) auto; }
+  .tl .when { grid-column: 1 / -1; }
+}
+.tl .when {
+  font-size: var(--fs-small); color: var(--ink-3); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.tl .body { min-width: 0; }
+.tl .who {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: var(--fs-micro); letter-spacing: 0.07em; text-transform: uppercase;
+  color: var(--ink-2); margin-right: var(--s1);
+}
+.tl .who::before {
+  content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--who);
+}
+.tl li[data-actor="builder"] { --who: var(--builder); }
+.tl li[data-actor="critic"] { --who: var(--critic); }
+.tl li[data-actor="critic"] .body { border-left: 2px solid var(--who); padding-left: 10px; margin-left: -12px; }
+.tl .mod-ref { font-size: var(--fs-small); color: var(--ink-3); }
+.tl .summary { color: var(--ink); line-height: 1.55; margin-top: 2px; }
+.tl .sc {
+  font-size: var(--fs-body); font-weight: 600; color: var(--ink);
+  border: 1px solid var(--line-strong); border-radius: 6px; padding: 1px 7px; white-space: nowrap;
+}
+
+/* ------------------------------------------------------------------ perf */
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: var(--s1); }
+.tile { padding: var(--s2) var(--s2) 10px; }
+.tile .k {
+  font-size: var(--fs-micro); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3);
+}
+.tile .v {
+  font-size: var(--fs-stat); font-weight: 600; line-height: 1.15; letter-spacing: -0.02em;
+  margin-top: 4px; font-variant-numeric: tabular-nums;
+}
+.tile .v .u { font-size: var(--fs-small); font-weight: 500; color: var(--ink-3); margin-left: 3px; letter-spacing: 0; }
+.tile .t {
+  display: flex; align-items: center; gap: 6px; margin-top: 6px;
+  font-size: var(--fs-micro); color: var(--ink-3);
+}
+.tile .t::before {
+  content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--j, var(--line-strong)); flex: none;
+}
+.tile[data-judge="good"] { --j: var(--ok); }
+.tile[data-judge="warn"] { --j: var(--warn); }
+.tile[data-judge="bad"] { --j: var(--crit); }
+.perf-note {
+  margin-top: var(--s1); font-size: var(--fs-small); color: var(--ink-3);
+  display: flex; gap: var(--s2); flex-wrap: wrap;
+}
+.perf-note b { font-weight: 500; color: var(--ink-2); }
+.perf-note .warnish { color: var(--serious); }
+
+/* -------------------------------------------------------------- captures */
+.strip {
+  display: flex; gap: var(--s1); overflow-x: auto; padding-bottom: var(--s1);
+  scrollbar-width: thin; scroll-snap-type: x proximity;
+}
+.strip::-webkit-scrollbar { height: 8px; }
+.strip::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 4px; }
+.shot {
+  flex: none; width: 168px; scroll-snap-align: start;
+  border-radius: 8px; overflow: hidden; text-align: left;
+  background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow);
+  transition: border-color 200ms var(--ease), transform 200ms var(--ease);
+}
+.shot:hover, .shot:focus-visible { border-color: var(--accent); transform: translateY(-1px); outline: none; }
+.shot .thumb {
+  aspect-ratio: 16 / 9; background: var(--surface-2); position: relative;
+  display: flex; align-items: center; justify-content: center;
+}
+.shot .thumb img { width: 100%; height: 100%; object-fit: cover; }
+.shot .thumb .miss {
+  display: none; font-size: var(--fs-micro); color: var(--ink-3); padding: var(--s1); text-align: center;
+  word-break: break-all;
+}
+.shot[data-broken="1"] .thumb img { display: none; }
+.shot[data-broken="1"] .thumb .miss { display: block; }
+.shot .cap { padding: 8px 10px 10px; }
+.shot .cap .l {
+  font-size: var(--fs-small); font-weight: 500; color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.shot .cap .m { font-size: var(--fs-micro); color: var(--ink-3); margin-top: 1px; }
+
+/* -------------------------------------------------------------- lightbox */
+.lb {
+  position: fixed; inset: 0; z-index: 100; display: none;
+  background: color-mix(in srgb, #000 82%, transparent);
+  align-items: center; justify-content: center; padding: var(--s3);
+  backdrop-filter: blur(6px);
+}
+.lb[data-open="1"] { display: flex; }
+.lb figure { max-width: 100%; max-height: 100%; display: flex; flex-direction: column; gap: var(--s1); }
+.lb img {
+  max-width: min(1400px, 92vw); max-height: 82vh; object-fit: contain;
+  border-radius: 8px; border: 1px solid var(--line-strong); background: var(--surface);
+}
+.lb figcaption {
+  color: #e8e8e4; font-size: var(--fs-body); display: flex; gap: var(--s2); align-items: baseline;
+}
+.lb figcaption .p { color: #9c9a92; font-size: var(--fs-small); }
+.lb .close {
+  position: absolute; top: var(--s2); right: var(--s2);
+  color: #e8e8e4; border: 1px solid rgba(255, 255, 255, 0.25); border-radius: 8px;
+  padding: 4px 10px; font-size: var(--fs-small); background: rgba(0, 0, 0, 0.35);
+}
+.lb .close:hover { border-color: rgba(255, 255, 255, 0.6); }
+
+/* ---------------------------------------------------------------- empty */
+.empty {
+  padding: var(--s3) var(--s2); text-align: center;
+  color: var(--ink-3); font-size: var(--fs-body);
+  border: 1px dashed var(--line-strong); border-radius: var(--radius);
+}
+
+/* ------------------------------------------------------------ animation */
+.enter { animation: enter 420ms var(--ease) both; }
+@keyframes enter { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+.flash { animation: flash 900ms var(--ease); }
+@keyframes flash {
+  0% { background-color: var(--accent-soft); }
+  100% { background-color: transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important; animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important; scroll-behavior: auto !important;
+  }
+}
+</style>
+</head>
+<body data-conn="ok">
+
+<header class="top">
+  <div class="top-in">
+    <div>
+      <div class="brand">
+        <h1 id="project">Spindash Speller</h1>
+        <span class="tag">build status</span>
+      </div>
+      <p class="goal" id="goal"></p>
+    </div>
+
+    <div class="top-meta">
+      <div class="ring">
+        <svg viewBox="0 0 60 60" aria-hidden="true">
+          <circle class="track" cx="30" cy="30" r="25" fill="none" stroke-width="5" />
+          <circle id="ringFill" class="fill" cx="30" cy="30" r="25" fill="none" stroke-width="5"
+                  stroke-dasharray="157.08" stroke-dashoffset="157.08"
+                  transform="rotate(-90 30 30)" />
+          <text id="ringPct" class="pct" x="30" y="30" text-anchor="middle" dominant-baseline="central">0%</text>
+        </svg>
+        <div class="ring-side">
+          <div class="k">Overall</div>
+          <div class="v num" id="ringSub">— modules</div>
+        </div>
+      </div>
+
+      <div class="stamp">
+        <div class="k">Updated</div>
+        <div class="v num" id="updated">—</div>
+        <div class="conn"><span class="pulse"></span> reconnecting</div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <section class="sec">
+    <div class="sec-head">
+      <h2>Modules</h2>
+      <span class="count num" id="modCount"></span>
+    </div>
+    <div class="modules" id="modules"></div>
+    <div class="empty hide" id="modulesEmpty">No modules registered yet.</div>
+  </section>
+
+  <div class="cols">
+    <section class="sec">
+      <div class="sec-head">
+        <h2>Iterations</h2>
+        <span class="count num" id="tlCount"></span>
+      </div>
+      <ul class="tl" id="timeline"></ul>
+      <div class="empty hide" id="tlEmpty">No builder or critic passes logged yet.</div>
+    </section>
+
+    <div>
+      <section class="sec">
+        <div class="sec-head">
+          <h2>Performance</h2>
+          <span class="count" id="perfSrc"></span>
+        </div>
+        <div class="tiles" id="tiles"></div>
+        <div class="perf-note" id="perfNote"></div>
+        <div class="empty hide" id="perfEmpty">No capture run yet — targets: 60fps p95, update &lt;4ms, render &lt;6ms, ≤4 draw calls.</div>
+      </section>
+
+      <section class="sec">
+        <div class="sec-head">
+          <h2>Captures</h2>
+          <span class="count num" id="shotCount"></span>
+        </div>
+        <div class="strip" id="shots"></div>
+        <div class="empty hide" id="shotsEmpty">No screenshots captured yet.</div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<div class="lb" id="lightbox" role="dialog" aria-modal="true" aria-label="Capture preview">
+  <button class="close" id="lbClose" type="button">Close (Esc)</button>
+  <figure>
+    <img id="lbImg" alt="" />
+    <figcaption><span id="lbLabel"></span><span class="p num" id="lbPath"></span></figcaption>
+  </figure>
+</div>
+
+<script>
+(() => {
+  "use strict";
+
+  const $ = (id) => document.getElementById(id);
+  const POLL_MS = 3000;
+  const STATUS_ORDER = ["pending", "building", "critiquing", "done", "blocked"];
+  const WEIGHT = { pending: 0, blocked: 0.1, building: 0.4, critiquing: 0.75, done: 1 };
+
+  let firstPaint = true;
+  let lastUpdatedAt = null;
+
+  /* ------------------------------------------------------------- helpers */
+
+  const setText = (el, v) => { const s = v == null ? "" : String(v); if (el.textContent !== s) el.textContent = s; };
+  const setAttr = (el, k, v) => { if (el.getAttribute(k) !== String(v)) el.setAttribute(k, String(v)); };
+  const toggle = (el, hidden) => el.classList.toggle("hide", !!hidden);
+
+  function relTime(iso) {
+    if (!iso) return "—";
+    const t = Date.parse(iso);
+    if (Number.isNaN(t)) return "—";
+    const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+    if (s < 5) return "just now";
+    if (s < 60) return s + "s ago";
+    const m = Math.floor(s / 60);
+    if (m < 60) return m + "m ago";
+    const h = Math.floor(m / 60);
+    if (h < 24) return h + "h " + (m % 60) + "m ago";
+    const d = Math.floor(h / 24);
+    return d + "d ago";
+  }
+
+  const clockTime = (iso) => {
+    const t = Date.parse(iso);
+    if (Number.isNaN(t)) return "";
+    return new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  };
+
+  /** shots[].path is relative to the project root; this page lives in progress/. */
+  function resolvePath(p) {
+    const raw = String(p || "");
+    if (/^(https?:|data:|blob:|\/)/i.test(raw)) return raw;
+    return "../" + raw.replace(/^\.\//, "");
+  }
+
+  /** Accepts a plain number or a capture stat object {min,p50,p95,max}. */
+  function pick(stat, key) {
+    if (stat == null) return null;
+    if (typeof stat === "number") return Number.isFinite(stat) ? stat : null;
+    if (typeof stat === "object") {
+      const v = stat[key] ?? stat.p95 ?? stat.p50 ?? stat.max ?? stat.value;
+      return typeof v === "number" && Number.isFinite(v) ? v : null;
+    }
+    return null;
+  }
+
+  const fmt = (n, dp) => (n == null ? "—" : n.toFixed(dp == null ? 1 : dp).replace(/\.0+$/, ""));
+  const plural = (n, word) => n + " " + word + (n === 1 ? "" : "s");
+
+  /** Minimal keyed list reconciler — reuses nodes so nothing flashes. */
+  function reconcile(container, items, keyOf, create, update) {
+    let cache = container._cache;
+    if (!cache) cache = container._cache = new Map();
+    const seen = new Set();
+    let ref = container.firstChild;
+
+    for (const item of items) {
+      const key = keyOf(item);
+      seen.add(key);
+      let el = cache.get(key);
+      let fresh = false;
+      if (!el) { el = create(item); cache.set(key, el); fresh = true; }
+      update(el, item);
+      if (el !== ref) container.insertBefore(el, ref);
+      else ref = ref.nextSibling;
+      if (fresh && !firstPaint) { el.classList.remove("enter"); void el.offsetWidth; el.classList.add("enter"); }
+    }
+    for (const [key, el] of cache) {
+      if (!seen.has(key)) { el.remove(); cache.delete(key); }
+    }
+  }
+
+  /* -------------------------------------------------------------- header */
+
+  const RING_C = 2 * Math.PI * 25;
+
+  function renderHeader(d) {
+    setText($("project"), d.project || "Project");
+    setText($("goal"), d.goal || "");
+    document.title = (d.project || "Project") + " — build status";
+
+    const mods = d.modules || [];
+    const total = mods.length || 1;
+    const sum = mods.reduce((a, m) => a + (WEIGHT[m.status] ?? 0), 0);
+    const pct = Math.round((sum / total) * 100);
+    setAttr($("ringFill"), "stroke-dasharray", RING_C.toFixed(2));
+    setAttr($("ringFill"), "stroke-dashoffset", (RING_C * (1 - sum / total)).toFixed(2));
+    setText($("ringPct"), pct + "%");
+
+    const counts = {};
+    for (const s of STATUS_ORDER) counts[s] = 0;
+    for (const m of mods) counts[m.status] = (counts[m.status] || 0) + 1;
+    const parts = [counts.done + " / " + mods.length + " done"];
+    if (counts.building) parts.push(counts.building + " building");
+    if (counts.critiquing) parts.push(counts.critiquing + " in review");
+    if (counts.blocked) parts.push(counts.blocked + " blocked");
+    setText($("ringSub"), parts.join(" · "));
+    setText($("modCount"), plural(mods.length, "module"));
+  }
+
+  /* ------------------------------------------------------------- modules */
+
+  function createModule() {
+    const el = document.createElement("article");
+    el.className = "card mod";
+    el.innerHTML =
+      '<div class="mod-top"><h3 class="mod-title"></h3>' +
+      '<span class="pill"><span class="dot"></span><span class="st"></span></span></div>' +
+      '<div class="mod-meta"><span class="owner"></span><span class="sep"></span>' +
+      '<span class="iter num"></span><span class="sep when-sep"></span><span class="when"></span></div>' +
+      '<div class="score-row hide"><span class="k">Score</span><span class="v num"></span>' +
+      '<span class="meter"><i></i></span></div>' +
+      '<p class="verdict hide"></p>' +
+      '<div class="gap hide"><span class="k">Biggest remaining gap</span><span class="v"></span></div>';
+    return el;
+  }
+
+  function updateModule(el, m) {
+    const status = STATUS_ORDER.includes(m.status) ? m.status : "pending";
+    if (el.dataset.status !== status) {
+      const had = el.dataset.status !== undefined;
+      el.dataset.status = status;
+      if (had && !firstPaint) { el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash"); }
+    }
+    setText(el.querySelector(".mod-title"), m.title || m.id);
+    setText(el.querySelector(".st"), status);
+    setText(el.querySelector(".owner"), m.owner || "unassigned");
+    setText(el.querySelector(".iter"), "iteration " + (m.iteration ?? 0));
+    const when = m.updatedAt ? relTime(m.updatedAt) : "";
+    setText(el.querySelector(".when"), when);
+    toggle(el.querySelector(".when-sep"), !when);
+
+    const hasScore = typeof m.score === "number" && Number.isFinite(m.score);
+    const row = el.querySelector(".score-row");
+    toggle(row, !hasScore);
+    if (hasScore) {
+      setText(row.querySelector(".v"), Math.round(m.score) + " / 100");
+      row.querySelector("i").style.width = Math.max(0, Math.min(100, m.score)) + "%";
+    }
+
+    const verdict = el.querySelector(".verdict");
+    toggle(verdict, !m.verdict);
+    if (m.verdict) setText(verdict, m.verdict);
+
+    const gap = el.querySelector(".gap");
+    toggle(gap, !m.gap);
+    if (m.gap) setText(gap.querySelector(".v"), m.gap);
+  }
+
+  function renderModules(d) {
+    const mods = d.modules || [];
+    toggle($("modulesEmpty"), mods.length > 0);
+    reconcile($("modules"), mods, (m) => m.id, createModule, updateModule);
+  }
+
+  /* ------------------------------------------------------------ timeline */
+
+  function createEntry() {
+    const el = document.createElement("li");
+    el.innerHTML =
+      '<span class="when num"></span>' +
+      '<div class="body"><span class="who"></span><span class="mod-ref"></span>' +
+      '<div class="summary"></div></div>' +
+      '<span class="sc num hide"></span>';
+    return el;
+  }
+
+  function updateEntry(el, e) {
+    const actor = e.actor === "critic" ? "critic" : "builder";
+    if (el.dataset.actor !== actor) el.dataset.actor = actor;
+    const when = el.querySelector(".when");
+    setText(when, relTime(e.ts));
+    const t = clockTime(e.ts);
+    setAttr(when, "title", t ? t + " · " + (e.ts || "") : String(e.ts || ""));
+    setText(el.querySelector(".who"), actor);
+    setText(el.querySelector(".mod-ref"), e.module || "");
+    setText(el.querySelector(".summary"), e.summary || "");
+    const sc = el.querySelector(".sc");
+    const has = typeof e.score === "number" && Number.isFinite(e.score);
+    toggle(sc, !has);
+    if (has) setText(sc, Math.round(e.score));
+  }
+
+  function renderTimeline(d) {
+    const raw = Array.isArray(d.iterations) ? d.iterations.slice() : [];
+    raw.sort((a, b) => String(b.ts || "").localeCompare(String(a.ts || "")));
+    toggle($("tlEmpty"), raw.length > 0);
+    setText($("tlCount"), raw.length ? plural(raw.length, "entry").replace("entrys", "entries") : "");
+    const keyOf = (e, i) => [e.ts, e.module, e.actor, e.summary].join("|");
+    reconcile($("timeline"), raw, keyOf, createEntry, updateEntry);
+  }
+
+  /* ---------------------------------------------------------------- perf */
+
+  const TILES = [
+    { key: "fps-p50", label: "FPS p50", unit: "", dp: 0, target: "≥ 60",
+      get: (p) => pick(p.fps, "p50"), judge: (v) => (v >= 59 ? "good" : v >= 50 ? "warn" : "bad") },
+    { key: "fps-p95", label: "FPS p95", unit: "", dp: 0, target: "≥ 60",
+      get: (p) => pick(p.fps, "p95"), judge: (v) => (v >= 60 ? "good" : v >= 50 ? "warn" : "bad") },
+    { key: "update", label: "Update p95", unit: "ms", dp: 2, target: "< 4ms",
+      get: (p) => pick(p.updateMs, "p95"), judge: (v) => (v < 4 ? "good" : v < 6 ? "warn" : "bad") },
+    { key: "render", label: "Render p95", unit: "ms", dp: 2, target: "< 6ms",
+      get: (p) => pick(p.renderMs, "p95"), judge: (v) => (v < 6 ? "good" : v < 9 ? "warn" : "bad") },
+    { key: "draws", label: "Draw calls", unit: "", dp: 0, target: "≤ 4",
+      get: (p) => pick(p.drawCalls, "max"), judge: (v) => (v <= 4 ? "good" : v <= 8 ? "warn" : "bad") },
+    { key: "sprites", label: "Sprites p95", unit: "", dp: 0, target: "no budget",
+      get: (p) => pick(p.sprites, "p95"), judge: () => null },
+    { key: "heap", label: "Heap", unit: "MB", dp: 0, target: "informational",
+      get: (p) => pick(p.heapMb, "max"), judge: () => null },
+  ];
+
+  function createTile() {
+    const el = document.createElement("div");
+    el.className = "card tile";
+    el.innerHTML = '<div class="k"></div><div class="v num"><span class="n">—</span><span class="u"></span></div><div class="t"></div>';
+    return el;
+  }
+
+  function renderPerf(d) {
+    const p = d.perf;
+    const has = p && typeof p === "object";
+    toggle($("perfEmpty"), has);
+    toggle($("tiles"), !has);
+    toggle($("perfNote"), !has);
+    setText($("perfSrc"), has && p.source ? p.source : "");
+    if (!has) { reconcile($("tiles"), [], (t) => t.key, createTile, () => {}); return; }
+
+    const items = TILES.map((t) => ({ ...t, value: t.get(p) }));
+    reconcile($("tiles"), items, (t) => t.key, createTile, (el, t) => {
+      setText(el.querySelector(".k"), t.label);
+      setText(el.querySelector(".n"), t.value == null ? "—" : fmt(t.value, t.dp));
+      setText(el.querySelector(".u"), t.value == null ? "" : t.unit);
+      const j = t.value == null ? null : t.judge(t.value);
+      if (j) el.dataset.judge = j; else el.removeAttribute("data-judge");
+      const verdict = j === "good" ? "on budget" : j === "warn" ? "over" : j === "bad" ? "well over" : null;
+      const label = t.value == null ? t.target + " · no sample" : verdict ? t.target + " · " + verdict : t.target;
+      setText(el.querySelector(".t"), label);
+    });
+
+    const note = $("perfNote");
+    const bits = [];
+    if (p.device) bits.push('<span>device <b>' + esc(p.device) + "</b></span>");
+    if (p.capturedAt) bits.push("<span>captured <b>" + esc(relTime(p.capturedAt)) + "</b></span>");
+    if (typeof p.atlasOccupancy === "number") bits.push("<span>atlas <b>" + Math.round(p.atlasOccupancy * 100) + "%</b> full</span>");
+    if (typeof p.longFrames === "number") bits.push("<span>long frames <b>" + p.longFrames + "</b></span>");
+    if (p.consoleErrors) bits.push('<span class="warnish">' + p.consoleErrors + " console error(s)</span>");
+    if (p.gpuTrustworthy === false) bits.push('<span class="warnish">headless run — frame timings not trustworthy</span>');
+    const html = bits.join("");
+    if (note.innerHTML !== html) note.innerHTML = html;
+  }
+
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+  /* ------------------------------------------------------------ captures */
+
+  function createShot() {
+    const el = document.createElement("button");
+    el.type = "button";
+    el.className = "shot";
+    el.innerHTML =
+      '<div class="thumb"><img alt="" loading="lazy" /><span class="miss"></span></div>' +
+      '<div class="cap"><div class="l"></div><div class="m num"></div></div>';
+    const img = el.querySelector("img");
+    img.addEventListener("error", () => { el.dataset.broken = "1"; });
+    img.addEventListener("load", () => { el.removeAttribute("data-broken"); });
+    el.addEventListener("click", () => openLightbox(el._shot));
+    return el;
+  }
+
+  function updateShot(el, s) {
+    el._shot = s;
+    const src = resolvePath(s.path);
+    const img = el.querySelector("img");
+    if (img.getAttribute("src") !== src) { el.removeAttribute("data-broken"); img.setAttribute("src", src); }
+    img.alt = s.label || s.path || "capture";
+    setText(el.querySelector(".miss"), (s.path || "").split("/").pop() || "missing");
+    setText(el.querySelector(".l"), s.label || "capture");
+    const meta = [s.module, s.ts ? relTime(s.ts) : null].filter(Boolean).join(" · ");
+    setText(el.querySelector(".m"), meta);
+  }
+
+  function renderShots(d) {
+    const shots = Array.isArray(d.shots) ? d.shots.slice() : [];
+    shots.sort((a, b) => String(b.ts || "").localeCompare(String(a.ts || "")));
+    toggle($("shotsEmpty"), shots.length > 0);
+    toggle($("shots"), shots.length === 0);
+    setText($("shotCount"), shots.length ? plural(shots.length, "frame") : "");
+    reconcile($("shots"), shots, (s) => s.path, createShot, updateShot);
+  }
+
+  /* ------------------------------------------------------------ lightbox */
+
+  const lb = $("lightbox");
+
+  function openLightbox(s) {
+    if (!s) return;
+    $("lbImg").src = resolvePath(s.path);
+    $("lbImg").alt = s.label || "capture";
+    setText($("lbLabel"), s.label || "capture");
+    setText($("lbPath"), s.path || "");
+    lb.dataset.open = "1";
+    document.body.style.overflow = "hidden";
+    $("lbClose").focus();
+  }
+  function closeLightbox() {
+    lb.removeAttribute("data-open");
+    $("lbImg").removeAttribute("src");
+    document.body.style.overflow = "";
+  }
+  lb.addEventListener("click", (e) => { if (e.target === lb || e.target.closest("#lbClose")) closeLightbox(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && lb.dataset.open) closeLightbox(); });
+
+  /* ---------------------------------------------------------------- data */
+
+  function render(d) {
+    renderHeader(d);
+    renderModules(d);
+    renderTimeline(d);
+    renderPerf(d);
+    renderShots(d);
+    lastUpdatedAt = d.updatedAt || null;
+    tickClock();
+    firstPaint = false;
+  }
+
+  function tickClock() { setText($("updated"), relTime(lastUpdatedAt)); }
+
+  async function load() {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 2500);
+    try {
+      const res = await fetch("status.json?t=" + Date.now(), { cache: "no-store", signal: ctrl.signal });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const data = await res.json();
+      if (!data || typeof data !== "object") throw new Error("bad payload");
+      document.body.dataset.conn = "ok";
+      render(data);
+    } catch (err) {
+      document.body.dataset.conn = "off";
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  load();
+  setInterval(load, POLL_MS);
+  setInterval(tickClock, 1000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,264 @@
+{
+  "generatedAt": "2026-08-01T19:46:58.575Z",
+  "assets": {
+    "sky_dusk": {
+      "id": "sky_dusk",
+      "group": "sky",
+      "w": 1536,
+      "h": 1024,
+      "opaque": true
+    },
+    "mountains_far": {
+      "id": "mountains_far",
+      "group": "far",
+      "w": 1400,
+      "h": 933,
+      "opaque": false,
+      "coverage": 0.168
+    },
+    "hills_mid": {
+      "id": "hills_mid",
+      "group": "mid",
+      "w": 1400,
+      "h": 933,
+      "opaque": false,
+      "coverage": 0.181
+    },
+    "tree_oak": {
+      "id": "tree_oak",
+      "group": "prop",
+      "w": 733,
+      "h": 1100,
+      "opaque": false,
+      "coverage": 0.566
+    },
+    "tree_pine": {
+      "id": "tree_pine",
+      "group": "prop",
+      "w": 733,
+      "h": 1100,
+      "opaque": false,
+      "coverage": 0.199
+    },
+    "tree_willow": {
+      "id": "tree_willow",
+      "group": "prop",
+      "w": 733,
+      "h": 1100,
+      "opaque": false,
+      "coverage": 0.534
+    },
+    "tree_birch_cluster": {
+      "id": "tree_birch_cluster",
+      "group": "prop",
+      "w": 733,
+      "h": 1100,
+      "opaque": false,
+      "coverage": 0.277
+    },
+    "ground_slab": {
+      "id": "ground_slab",
+      "group": "ground",
+      "w": 1400,
+      "h": 933,
+      "opaque": false,
+      "coverage": 0.359
+    },
+    "grass_tuft_a": {
+      "id": "grass_tuft_a",
+      "group": "foreground",
+      "w": 460,
+      "h": 460,
+      "opaque": false,
+      "coverage": 0.311
+    },
+    "grass_tuft_b": {
+      "id": "grass_tuft_b",
+      "group": "foreground",
+      "w": 460,
+      "h": 460,
+      "opaque": false,
+      "coverage": 0.219
+    },
+    "fern_cluster": {
+      "id": "fern_cluster",
+      "group": "foreground",
+      "w": 520,
+      "h": 520,
+      "opaque": false,
+      "coverage": 0.444
+    },
+    "bush_round": {
+      "id": "bush_round",
+      "group": "prop",
+      "w": 560,
+      "h": 560,
+      "opaque": false,
+      "coverage": 0.47
+    },
+    "rock_mossy": {
+      "id": "rock_mossy",
+      "group": "prop",
+      "w": 560,
+      "h": 560,
+      "opaque": false,
+      "coverage": 0.451
+    },
+    "rock_small_pair": {
+      "id": "rock_small_pair",
+      "group": "prop",
+      "w": 420,
+      "h": 420,
+      "opaque": false,
+      "coverage": 0.308
+    },
+    "ruin_arch": {
+      "id": "ruin_arch",
+      "group": "prop",
+      "w": 600,
+      "h": 900,
+      "opaque": false,
+      "coverage": 0.399
+    },
+    "ruin_pillar": {
+      "id": "ruin_pillar",
+      "group": "prop",
+      "w": 520,
+      "h": 780,
+      "opaque": false,
+      "coverage": 0.314
+    },
+    "mushroom_cluster": {
+      "id": "mushroom_cluster",
+      "group": "prop",
+      "w": 560,
+      "h": 560,
+      "opaque": false,
+      "coverage": 0.493
+    },
+    "cloud_a": {
+      "id": "cloud_a",
+      "group": "cloud",
+      "w": 900,
+      "h": 600,
+      "opaque": false,
+      "coverage": 0.356
+    },
+    "cloud_b": {
+      "id": "cloud_b",
+      "group": "cloud",
+      "w": 900,
+      "h": 600,
+      "opaque": false,
+      "coverage": 0.099
+    },
+    "block_stone": {
+      "id": "block_stone",
+      "group": "block",
+      "w": 420,
+      "h": 420,
+      "opaque": false,
+      "coverage": 0.564
+    },
+    "block_crystal": {
+      "id": "block_crystal",
+      "group": "block",
+      "w": 420,
+      "h": 420,
+      "opaque": false,
+      "coverage": 0.532
+    },
+    "block_amber": {
+      "id": "block_amber",
+      "group": "block",
+      "w": 420,
+      "h": 420,
+      "opaque": false,
+      "coverage": 0.552
+    },
+    "hog_ball": {
+      "id": "hog_ball",
+      "group": "hero",
+      "w": 420,
+      "h": 420,
+      "opaque": false,
+      "coverage": 0.399
+    },
+    "hog_run": {
+      "id": "hog_run",
+      "group": "hero",
+      "w": 460,
+      "h": 460,
+      "opaque": false,
+      "coverage": 0.348
+    },
+    "hog_cheer": {
+      "id": "hog_cheer",
+      "group": "hero",
+      "w": 460,
+      "h": 460,
+      "opaque": false,
+      "coverage": 0.367
+    },
+    "hog_walk_0": {
+      "id": "hog_walk_0",
+      "group": "hero",
+      "w": 460,
+      "h": 460,
+      "coverage": 0.353
+    },
+    "hog_walk_1": {
+      "id": "hog_walk_1",
+      "group": "hero",
+      "w": 460,
+      "h": 460,
+      "coverage": 0.335
+    },
+    "hog_walk_2": {
+      "id": "hog_walk_2",
+      "group": "hero",
+      "w": 460,
+      "h": 460,
+      "coverage": 0.353
+    },
+    "hog_walk_3": {
+      "id": "hog_walk_3",
+      "group": "hero",
+      "w": 460,
+      "h": 460,
+      "coverage": 0.354
+    },
+    "hog_ball_blur": {
+      "id": "hog_ball_blur",
+      "group": "hero",
+      "w": 420,
+      "h": 420,
+      "opaque": false,
+      "coverage": 0.443
+    },
+    "canopy_overhang": {
+      "id": "canopy_overhang",
+      "group": "canopy",
+      "w": 1180,
+      "h": 787,
+      "opaque": false,
+      "coverage": 0.387
+    },
+    "vines_hanging": {
+      "id": "vines_hanging",
+      "group": "canopy",
+      "w": 667,
+      "h": 1000,
+      "opaque": false,
+      "coverage": 0.198
+    },
+    "cliff_column": {
+      "id": "cliff_column",
+      "group": "tall",
+      "w": 800,
+      "h": 1200,
+      "opaque": false,
+      "coverage": 0.198
+    }
+  }
+}

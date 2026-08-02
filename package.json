@@ -1,0 +1,21 @@
+{
+  "name": "spindash-speller",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 5188 --strictPort",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --port 5189 --strictPort",
+    "typecheck": "tsc --noEmit",
+    "capture": "node tools/capture.mjs",
+    "shot": "node tools/shot.mjs",
+    "gallery": "node tools/gallery.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.48.0",
+    "sharp": "^0.35.3",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10"
+  }
+}

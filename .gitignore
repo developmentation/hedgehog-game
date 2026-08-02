@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+screenshots/
+captures/
+art-src/raw/
+art-src/_*.png
+art-src/contact-sheet.png
