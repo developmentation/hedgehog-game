@@ -21,16 +21,73 @@
  */
 
 import { chromium } from 'playwright';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdir, readdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
+import net from 'node:net';
 import path from 'node:path';
 import sharp from 'sharp';
 
 const ROOT = path.resolve('.');
 const GOLDEN_DIR = path.join(ROOT, 'docs', 'golden');
 const OUT_DIR = path.join(ROOT, 'screenshots', 'golden-run');
-const PORT = 5499;
+
+/**
+ * The port is chosen at run time, never fixed.
+ *
+ * This was `const PORT = 5499`, and `serve()` treated "something answers on
+ * 5499" as "our preview server is up". When anything else already held that
+ * port — a second checkout, another agent's preview, a leaked server from an
+ * earlier run — `--strictPort` made OUR vite exit, the readiness fetch hit the
+ * FOREIGN server, and the guard photographed a build it had never been asked
+ * to test. That is the worst failure a regression guard has: not a false alarm
+ * but a confident verdict about the wrong subject. It reported seven of seven
+ * shots changed at ~99.9% of pixels, which is what a build serving procedural
+ * fallback art looks like next to a painted reference.
+ */
+let PORT = 0;
+
+/** An ephemeral port the OS confirms is free, so nobody else can be on it. */
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const s = net.createServer();
+    s.on('error', reject);
+    s.listen(0, '127.0.0.1', () => {
+      const { port } = s.address();
+      s.close(() => resolve(port));
+    });
+  });
+}
+
+/**
+ * Kill the preview server and everything it spawned.
+ *
+ * `spawn(..., { shell: true })` gives back the shell, not vite, so `.kill()`
+ * reaped the wrapper and left vite holding `dist/`. The next `vite build` then
+ * died with `ENOTEMPTY: rmdir 'dist/art'` at `emptyOutDir` — a failure that
+ * looks like a broken build and is really a leaked child from the last run.
+ */
+function killTree(proc) {
+  if (!proc || proc.exitCode !== null) return;
+  if (process.platform === 'win32') {
+    try {
+      spawnSync('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { stdio: 'ignore' });
+    } catch {
+      /* already gone */
+    }
+  } else {
+    try {
+      process.kill(-proc.pid, 'SIGKILL');
+    } catch {
+      /* already gone */
+    }
+  }
+  try {
+    proc.kill();
+  } catch {
+    /* already gone */
+  }
+}
 
 const args = process.argv.slice(2);
 const has = (n) => args.includes(`--${n}`);
@@ -137,19 +194,38 @@ const SHOTS = [
 ];
 
 async function serve() {
+  PORT = await freePort();
   const proc = spawn('npx', ['vite', 'preview', '--port', String(PORT), '--strictPort'], {
     cwd: ROOT,
     shell: true,
     stdio: 'ignore',
+    detached: process.platform !== 'win32',
   });
+
+  // A leaked server outlives the process that made it, so hang the cleanup off
+  // the interpreter rather than trusting one `finally` to run.
+  const onExit = () => killTree(proc);
+  process.once('exit', onExit);
+  process.once('SIGINT', () => {
+    onExit();
+    process.exit(130);
+  });
+
   for (let i = 0; i < 80; i++) {
+    // If vite died — a port race, a missing `dist/`, a bad config — stop.
+    // Continuing here is how the old harness ended up reading someone else's
+    // server: the child was gone but something still answered.
+    if (proc.exitCode !== null) {
+      throw new Error(`preview server exited with code ${proc.exitCode} before serving`);
+    }
     try {
       if ((await fetch(`http://127.0.0.1:${PORT}/`)).ok) return proc;
     } catch {
-      await sleep(300);
+      /* not up yet */
     }
+    await sleep(300);
   }
-  proc.kill();
+  killTree(proc);
   throw new Error('preview server did not start');
 }
 
@@ -191,7 +267,24 @@ async function capture(browser, shot) {
     });
     await page.reload({ waitUntil: 'load' });
     await page.waitForFunction(() => !!window.__game, null, { timeout: 30000 });
-    await sleep(600);
+
+    // WAIT FOR THE PAINTED ART, NOT FOR THE CLOCK.
+    //
+    // `window.__game` exists as soon as boot finishes, but the generated art
+    // loads in the BACKGROUND afterwards (`AssetLibrary.loadRest`, called after
+    // the first frame so the remaining themes arrive while the player reads the
+    // first word). Until it lands, every scene draws the procedural fallback,
+    // and a shot taken then differs from the reference in ~99.9% of pixels —
+    // the signature of a different frame, not of drift.
+    //
+    // This was a flat `sleep(600)`. Measured on a warm dev server the art was
+    // resident well inside that window in 5 runs of 5, so the sleep was not
+    // observed to lose the race — but it is a magic number racing an async
+    // load rather than a wait for it, and nothing pins it to the load's actual
+    // cost. `whenComplete()` resolves when every manifest asset is resident,
+    // so the harness now waits on the condition it actually depends on.
+    await page.evaluate(() => window.__game.ctx.assets.whenComplete());
+    await sleep(200);
 
     await page.evaluate(
       ([poseSrc, raw]) => {
@@ -331,7 +424,7 @@ async function main() {
     }
   } finally {
     await browser.close();
-    server.kill();
+    killTree(server);
   }
 
   console.log('');
