@@ -52,8 +52,18 @@ export class SceneStack {
     r.end();
 
     // HUD renders unshaken and unzoomed so text never wobbles or blurs.
+    //
+    // It is also exempt from raw mode. Raw mode exists to show the painted
+    // world exactly as authored, and it does that by forcing every sprite's
+    // colour multiply to white — but interface art is baked white on purpose
+    // and gets all of its colour at draw time, so the same switch erased the
+    // HUD entirely. The world is the thing being judged; the UI just needs to
+    // stay readable while you judge it.
+    const rawWorld = r.rawMode;
+    r.rawMode = false;
     r.begin(0, 0, 1);
     for (const s of this.scenes) s.drawUi?.(ctx);
     r.end();
+    r.rawMode = rawWorld;
   }
 }

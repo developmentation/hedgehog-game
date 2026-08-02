@@ -67,7 +67,8 @@ async function boot(): Promise<void> {
     time: 0,
     alpha: 0,
     timeScale: 1,
-    rawMode: false,
+    // Booting in RAW: art drawn exactly as painted, no styling passes.
+    rawMode: true,
     reducedMotion:
       save.profile.settings.reducedMotion ||
       window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ||
@@ -152,6 +153,8 @@ async function boot(): Promise<void> {
       stack.render();
     },
   });
+
+  r.rawMode = ctx.rawMode;
 
   attachDebug(ctx, loop, { bakeMs });
 
