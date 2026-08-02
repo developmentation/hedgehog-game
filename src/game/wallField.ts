@@ -33,7 +33,7 @@
  */
 
 import type { Ctx } from '../core/ctx';
-import { VIEW_W, GROUND_Y, clamp, damp, lerp, easeOutBack } from '../core/ctx';
+import { VIEW_W, GROUND_Y, clamp, lerp, easeOutBack } from '../core/ctx';
 import { BLOCK_W, BLOCK_H } from '../art/letters';
 import { Blend, type Frame } from '../engine/gl';
 import type { EmitOptions, Particles } from './particles';
@@ -71,6 +71,16 @@ export interface Block {
   dsx: number;
   dsy: number;
   drot: number;
+  /**
+   * The glyph sprite for `letter`, resolved once and cached.
+   *
+   * `draw` used to build the atlas key with a template literal — one string
+   * per block per frame, plus a hash lookup — and at a few dozen blocks that
+   * is invisible. It is not a few dozen blocks that this has to survive.
+   * Anything that writes `letter` must null this; `ensureWinnable` is the only
+   * thing that does.
+   */
+  glyph: Frame | null;
 }
 
 export interface Wall {
@@ -314,6 +324,7 @@ export class WallField {
         dsx: 1,
         dsy: 1,
         drot: 0,
+        glyph: null,
       });
       mat = (mat + 1 + ctx.rng.int(0, 2)) % 3;
     }
@@ -688,30 +699,56 @@ export class WallField {
       ? clamp((TELEGRAPH_FAR - (bestX - f.playerX)) / (TELEGRAPH_FAR - TELEGRAPH_NEAR), 0, 1)
       : 0;
 
+    /**
+     * The three `damp` decay factors, computed once instead of once per block.
+     *
+     * `damp(a, b, lambda, dt)` is `b + (a - b) * Math.exp(-lambda * dt)`, and
+     * within one update `lambda` and `dt` are constant at each call site — so
+     * the whole field was calling `Math.exp` three times per block to get
+     * three numbers that are the same for every block in the frame. Expanded
+     * in place below with the factor hoisted, which is the identical sequence
+     * of floating-point operations and therefore bit-identical output.
+     */
+    const kJolt = Math.exp(-T.joltDecay * dt);
+    const kHover = Math.exp(-T.hoverEase * dt);
+    const kTarget = Math.exp(-6 * dt);
+
+    // Input state and the hover pads are frame constants too.
+    const hasHover = ctx.input.hasHover;
+    const hoverX = ctx.input.hoverX;
+    const hoverY = ctx.input.hoverY;
+    const hoverPadX = BLOCK_W * T.hoverPad;
+    const hoverPadY = BLOCK_H * T.hoverPad;
+
     for (const w of this.walls) {
       w.x -= move;
       const isTargetWall = w === target;
 
       for (const b of w.blocks) {
         if (b.born < 1) b.born = Math.min(1, b.born + dt * T.bornRate);
-        b.jolt = damp(b.jolt, 0, T.joltDecay, dt);
+        b.jolt *= kJolt;
 
         // Vertical spring: the block sags under an impact and rides back up.
         b.sagV += (-b.sag * SPRING_K - b.sagV * SPRING_D) * dt;
         b.sag = clamp(b.sag + b.sagV * dt, -34, 34);
 
         const hovered =
-          ctx.input.hasHover &&
+          hasHover &&
           b.alive &&
-          Math.abs(ctx.input.hoverX - (w.x + b.ox)) < BLOCK_W * T.hoverPad &&
-          Math.abs(ctx.input.hoverY - b.y) < BLOCK_H * T.hoverPad;
-        b.hoverT = damp(b.hoverT, hovered ? 1 : 0, T.hoverEase, dt);
+          Math.abs(hoverX - (w.x + b.ox)) < hoverPadX &&
+          Math.abs(hoverY - b.y) < hoverPadY;
+        const hoverTo = hovered ? 1 : 0;
+        b.hoverT = hoverTo + (b.hoverT - hoverTo) * kHover;
 
         const wanted = b.alive && isTargetWall && b.letter === need;
-        b.targetT = damp(b.targetT, wanted ? prox : 0, 6, dt);
+        const targetTo = wanted ? prox : 0;
+        b.targetT = targetTo + (b.targetT - targetTo) * kTarget;
 
         // --- presentation transform ---------------------------------------
-        const born = easeOutBack(clamp(b.born, 0, 1));
+        // `easeOutBack(1)` is exactly 1, and a block is fully born for all but
+        // the first few frames of its life, so the two `Math.pow` calls inside
+        // it are skipped for the whole steady state.
+        const born = b.born >= 1 ? 1 : easeOutBack(clamp(b.born, 0, 1));
         const j = b.jolt;
         const wob = Math.sin(time * 34 + b.phase) * j;
         const breathe = b.targetT * 0.015 * (0.5 + 0.5 * Math.sin(time * 4.2 + b.phase));
@@ -794,6 +831,7 @@ export class WallField {
     if (victim === -1) return;
 
     blocks[victim].letter = need;
+    blocks[victim].glyph = null; // the cached sprite is now the wrong letter
     // Re-seat it so the swap reads as the block settling, not a letter
     // flickering in place.
     blocks[victim].born = Math.min(blocks[victim].born, 0.35);
@@ -899,8 +937,14 @@ export class WallField {
       if (w.x < -CULL || w.x > VIEW_W + CULL) continue;
       for (const b of w.blocks) {
         if (!b.alive) continue;
+        // The pulse only ever scales `targetT`'s share, and its factor is
+        // bounded by 0.23 — so this is the same rejection the `a <= 0.01` test
+        // below makes, taken before paying for the sine. Almost every block in
+        // the field is neither hovered nor telegraphed and exits here.
+        const hoverA = b.hoverT * 0.4;
+        if (hoverA + b.targetT * 0.23 <= 0.01) continue;
         const pulse = 0.5 + 0.5 * Math.sin(time * 4.2 + b.phase);
-        const a = b.hoverT * 0.4 + b.targetT * (0.1 + 0.13 * pulse);
+        const a = hoverA + b.targetT * (0.1 + 0.13 * pulse);
         if (a <= 0.01) continue;
         r.draw(
           glow,
@@ -1011,7 +1055,7 @@ export class WallField {
           POOL_ALPHA[b.mat],
         );
 
-        const gl = ctx.atlas.get(`glyph/${b.letter}`);
+        const gl = b.glyph ?? (b.glyph = ctx.atlas.get(`glyph/${b.letter}`));
         const box = b.size * GLYPH_FRACTION;
         const gx = (box / gl.w) * b.dsx;
         const gy = (box / gl.h) * b.dsy;
