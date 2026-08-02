@@ -174,7 +174,15 @@ const WALK_DUST_X = [14, 0, -16, 0];
  * value was six times this; it existed to fake movement on a still sprite, and
  * left on top of a real cycle it reads as a double-bounce.
  */
-const WALK_BODY_LIFT = 1.4;
+/**
+ * Brightness for the walking pose.
+ *
+ * Neutral. This was lifted to win a luminance-separation measurement taken
+ * while the backdrop was temporarily washed out; against the restored dusk
+ * palette it rendered him bright red-orange and blown out. The walk art is
+ * already warm and lit — it needs no help.
+ */
+const WALK_BODY_LIFT = 1.0;
 
 /**
  * Spin rate, rad/s, over which the painted face gives way to the quill blur.
@@ -1852,6 +1860,7 @@ export class Player {
 
     const rolling = this.state !== 'dance';
     const kind = this.state === 'dance' ? 2 : rolling && !this.curled && this.state === 'run' ? 1 : 0;
+    const curledPose = kind === 0;
     this.resolvePose(ctx, kind);
     const f = this.poseFrame;
     if (!f) return;
@@ -1976,6 +1985,7 @@ export class Player {
 
     const rolling = this.state !== 'dance';
     const kind = this.state === 'dance' ? 2 : rolling && !this.curled && this.state === 'run' ? 1 : 0;
+    const curledPose = kind === 0;
     this.resolvePose(ctx, kind);
     const f = this.poseFrame;
     if (!f) return;
@@ -2131,7 +2141,7 @@ export class Player {
     // This is the roll. It turns; the body under it does not. Outside dash
     // flight it is mounted on the uniform scale so that a body mid-squash does
     // not shear a wheel that is supposed to be round.
-    if (mix > 0.004) {
+    if (curledPose && mix > 0.004) {
       const bf = this.blurFrame!;
       const bs = this.blurAdj;
       const flight = this.state === 'dash' && this.stateT >= T.dashTime * CHARGE_FRAC;

@@ -103,7 +103,7 @@ export const TUNING = {
      * towards a bright backdrop *reduces* the value gap. The separation is
      * bought by the rim; this only puts his amber back where the paint had it.
      */
-    heroLift: 1.06,
+    heroLift: 1.0,
     /** How fast afterimages fade, and how many are kept. */
     echoFade: 4,
     echoLimit: 12,
