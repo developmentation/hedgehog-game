@@ -81,6 +81,8 @@ export interface Block {
    * thing that does.
    */
   glyph: Frame | null;
+  /** The baked outline sprite for `letter`, resolved once and cached. */
+  glyphOutline: Frame | null;
 }
 
 export interface Wall {
@@ -114,8 +116,14 @@ const CULL = 120;
 
 /** Glyph box as a fraction of the drawn cube. Big: legibility beats elegance. */
 const GLYPH_FRACTION = 0.8;
-/** Outline offset as a fraction of the glyph box. */
-const OUTLINE_R = 0.052;
+/**
+ * Span of the baked outline sprite, in glyph boxes.
+ *
+ * Must match `OUTLINE_PAD` in `art/letters.ts`: the sprite is padded so the
+ * offset copies inside it are not clipped, so it is drawn correspondingly
+ * larger than the glyph box it surrounds.
+ */
+const OUTLINE_SPAN = 1 + 0.14 * 2;
 /** Soft dark pool behind the glyph, as a fraction of the cube. */
 const POOL_FRACTION = 1.06;
 
@@ -325,6 +333,7 @@ export class WallField {
         dsy: 1,
         drot: 0,
         glyph: null,
+        glyphOutline: null,
       });
       mat = (mat + 1 + ctx.rng.int(0, 2)) % 3;
     }
@@ -832,6 +841,7 @@ export class WallField {
 
     blocks[victim].letter = need;
     blocks[victim].glyph = null; // the cached sprite is now the wrong letter
+    blocks[victim].glyphOutline = null;
     // Re-seat it so the swap reads as the block settling, not a letter
     // flickering in place.
     blocks[victim].born = Math.min(blocks[victim].born, 0.35);
@@ -1062,14 +1072,19 @@ export class WallField {
         // Optical centre: the painted cubes carry a heavier bottom bevel, so
         // the letter sits a hair above the geometric middle.
         const cy = b.dy - b.size * 0.012;
-        const o = box * OUTLINE_R;
 
-        // Hard outline: four diagonal offsets, the lower-right one pushed out
-        // further so it doubles as a cast shadow.
-        r.draw(gl, b.dx - o, cy - o, gx, gy, b.drot, 0.04, 0.03, 0.08, 0.92);
-        r.draw(gl, b.dx + o, cy - o, gx, gy, b.drot, 0.04, 0.03, 0.08, 0.92);
-        r.draw(gl, b.dx - o, cy + o, gx, gy, b.drot, 0.04, 0.03, 0.08, 0.92);
-        r.draw(gl, b.dx + o * 1.7, cy + o * 2.1, gx, gy, b.drot, 0.03, 0.02, 0.06, 0.85);
+        // Hard outline plus cast shadow, in ONE quad.
+        //
+        // This was four offset copies of the glyph, which with the fill made
+        // five full glyph-box quads per block — 62% of everything this field
+        // submitted, and the frame is fill-bound rather than draw-call-bound,
+        // so it was 62% of the fill too. The four are now baked into
+        // `glyphOutline/*` at atlas time. Source-over is associative and all
+        // four copies are the same flat dark colour, so this is exact rather
+        // than an approximation; see `glyphOutlinePainter`.
+        const ol = b.glyphOutline ?? (b.glyphOutline = ctx.atlas.get(`glyphOutline/${b.letter}`));
+        const obox = box * OUTLINE_SPAN;
+        r.draw(ol, b.dx, cy, (obox / ol.w) * b.dsx, (obox / ol.h) * b.dsy, b.drot, 1, 1, 1, 1);
 
         // Fill. Constant near-white so the letter never changes identity;
         // the telegraph only warms it, it does not recolour it.

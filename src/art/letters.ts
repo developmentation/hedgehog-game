@@ -99,6 +99,67 @@ function glyphPainter(ch: string): Painter {
   };
 }
 
+/**
+ * Outline offsets, as a fraction of the glyph box, and the pad that holds them.
+ *
+ * These mirror `OUTLINE_R` and the shadow offset in `wallField.ts`; they live
+ * here too because the sprite has to be large enough to contain them. `PAD` is
+ * the extra box on each side, so the sprite spans 1 + 2*PAD glyph boxes.
+ */
+const OUTLINE_R = 0.052;
+const OUTLINE_PAD = 0.14;
+const OUTLINE_OFFSETS: [number, number, number][] = [
+  // dx, dy (in units of OUTLINE_R), alpha
+  [-1, -1, 0.92],
+  [1, -1, 0.92],
+  [-1, 1, 0.92],
+  [1.7, 2.1, 0.85],
+];
+
+/**
+ * The glyph's dark outline and cast shadow, baked into one sprite.
+ *
+ * The field used to draw this as four offset copies of the glyph plus the
+ * fill: five full glyph-box quads per block, which was 62% of everything the
+ * field submitted and — since this frame is fill-bound, not draw-call-bound —
+ * 62% of the fill it cost. Baking collapses the four into one.
+ *
+ * This is EXACT, not an approximation. Source-over is associative, so
+ * compositing the four copies into a sprite and that sprite over the block
+ * face gives the same pixels as compositing them over the face one at a time;
+ * they are all the same flat dark colour, so there is no order-dependent
+ * hue mixing to lose either. The only real difference is one resample of the
+ * baked sprite instead of four of the glyph.
+ */
+function glyphOutlinePainter(ch: string): Painter {
+  const span = 1 + OUTLINE_PAD * 2;
+  return {
+    name: `glyphOutline/${ch}`,
+    w: GLYPH * span,
+    h: GLYPH * span,
+    draw(ctx, w, h) {
+      const box = w / span;
+      const o = box * OUTLINE_R;
+      ctx.save();
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = `900 ${Math.round(box * 0.78)}px "Arial Black", "Segoe UI", system-ui, sans-serif`;
+      // The glyph's own centre inside the padded sprite.
+      const cx = w / 2;
+      const cy = h / 2 - box * 0.5 + box * 0.54;
+      for (const [dx, dy, a] of OUTLINE_OFFSETS) {
+        // The lower-right offset is pushed further and lighter: it doubles as
+        // the cast shadow, which is why it is in this list rather than drawn
+        // separately.
+        ctx.globalAlpha = a;
+        ctx.fillStyle = a > 0.9 ? 'rgb(10,8,20)' : 'rgb(8,5,15)';
+        ctx.fillText(ch, cx + dx * o, cy + dy * o);
+      }
+      ctx.restore();
+    },
+  };
+}
+
 export function letterPainters(): Painter[] {
   const out: Painter[] = [
     blockFace('block/stone', STONE, false),
@@ -126,7 +187,11 @@ export function letterPainters(): Painter[] {
     },
   });
 
-  for (let i = 0; i < 26; i++) out.push(glyphPainter(String.fromCharCode(65 + i)));
+  for (let i = 0; i < 26; i++) {
+    const ch = String.fromCharCode(65 + i);
+    out.push(glyphPainter(ch));
+    out.push(glyphOutlinePainter(ch));
+  }
 
   for (let i = 0; i < 4; i++) {
     out.push({
