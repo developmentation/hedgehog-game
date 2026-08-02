@@ -80,6 +80,18 @@ export class WordSession {
     return this.entry.say ?? this.entry.word.toLowerCase();
   }
 
+  /**
+   * The clue, as speech.
+   *
+   * The clue is the question, and it was text-only — which excluded exactly
+   * the player this game is aimed at, a child who cannot read it yet. It is
+   * safe to speak for the same reason it is safe to show: the word bank
+   * guarantees a clue never contains the word or its first four letters.
+   */
+  get spokenClue(): string {
+    return this.entry.clue;
+  }
+
   /** Roll a new word for the current rung and reset progress through it. */
   begin(ctx: Ctx): void {
     this.entry = this.pick(ctx);

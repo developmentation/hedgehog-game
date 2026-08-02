@@ -162,6 +162,8 @@ export class AudioBus {
   private voice: VoicePick = { voice: null, rate: 0.86, pitch: 1.0 };
   private unlocked = false;
   private comboStep = 0;
+  /** Bumped by every new sequence, so a superseded one stops mid-way. */
+  private sequenceGen = 0;
   private smashCount = 0;
 
   /** Every scheduled one-shot source, so it can be torn down deterministically. */
@@ -1364,6 +1366,38 @@ export class AudioBus {
       }
       this.speechStartTimer = window.setTimeout(begin, 70);
     });
+  }
+
+  /**
+   * Speak several phrases back to back, as one interruptible unit.
+   *
+   * `speak` deliberately supersedes whatever is talking, so chaining two
+   * calls would have the second cancel the first. This awaits each phrase
+   * and carries a generation token, so a sequence that gets superseded
+   * stops instead of finishing over the top of whatever replaced it —
+   * which is what a player mashing the hint button would otherwise get.
+   */
+  async speakSequence(
+    phrases: readonly string[],
+    opts: { rate?: number; pitch?: number; gapMs?: number } = {},
+  ): Promise<void> {
+    const gen = ++this.sequenceGen;
+    const gap = opts.gapMs ?? 260;
+    for (let i = 0; i < phrases.length; i++) {
+      const text = phrases[i];
+      if (!text) continue;
+      if (gen !== this.sequenceGen) return;
+      await this.speak(text, opts);
+      if (gen !== this.sequenceGen) return;
+      if (i < phrases.length - 1 && gap > 0) {
+        await new Promise<void>((r) => setTimeout(r, gap));
+      }
+    }
+  }
+
+  /** Stop any running sequence without cancelling the current utterance. */
+  endSequence(): void {
+    this.sequenceGen++;
   }
 
   cancelSpeech(): void {

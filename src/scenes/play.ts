@@ -519,11 +519,38 @@ export class PlayScene implements Scene {
     this.player.returnHome();
 
     this.field.reset(ctx, this.session);
-    this.speakWord(ctx);
+    this.speakPrompt(ctx);
   }
 
+  /**
+   * Say the prompt out loud: the clue, then the word.
+   *
+   * Both, because the clue IS the question and it used to be text only —
+   * which locked out the player this game is for, a child who cannot read it
+   * yet.
+   *
+   * WORD FIRST, then the clue. The obvious order is question-then-answer, and
+   * it was wrong: a child pressing the button again restarts the sequence, so
+   * with the clue leading they hear the question over and over and never reach
+   * the word they actually have to spell. Measured — five presses, zero words.
+   * Leading with the word means every single press delivers the thing they
+   * need, and the clue follows for anyone who waits.
+   *
+   * Repeatable without limit. There is no cooldown and no penalty: needing
+   * to hear it again is not a mistake, it is the game working.
+   */
+  private speakPrompt(ctx: Ctx, withClue = true): void {
+    this.speakerPulse = 1;
+    const rate = ctx.save.profile.settings.speechRate;
+    const word = this.session.spoken;
+    const clue = this.session.spokenClue;
+    void ctx.audio.speakSequence(withClue ? [word, clue] : [word], { rate });
+  }
+
+  /** Just the word, for moments that should not replay the whole prompt. */
   private speakWord(ctx: Ctx): void {
     this.speakerPulse = 1;
+    ctx.audio.endSequence();
     void ctx.audio.speak(this.session.spoken, {
       rate: ctx.save.profile.settings.speechRate,
     });
@@ -538,7 +565,7 @@ export class PlayScene implements Scene {
    * information the player already had rather than giving anything away.
    */
   private recallHint(ctx: Ctx): void {
-    this.speakWord(ctx);
+    this.speakPrompt(ctx);
     this.hintT = TUNING.feel.hintHold;
     // An answer to something the player actually asked for outranks an
     // unsolicited nudge, so an INFO banner stands down and the clue appears now
@@ -712,7 +739,7 @@ export class PlayScene implements Scene {
     }
     this.pauseMenu.close();
     if (recap && (this.phase === 'listening' || this.phase === 'playing')) {
-      this.speakWord(ctx);
+      this.speakPrompt(ctx);
       this.hintT = TUNING.feel.hintHold;
     }
   }
@@ -932,7 +959,10 @@ export class PlayScene implements Scene {
       if (ctx.input.anyPressed) {
         this.phase = 'listening';
         this.phaseT = 0;
-        this.speakWord(ctx);
+        // The whole prompt, not just the word: browsers only unlock audio on a
+        // gesture, so the prompt spoken during boot was silently discarded and
+        // THIS is the first one the player actually hears.
+        this.speakPrompt(ctx);
       }
       return;
     }
