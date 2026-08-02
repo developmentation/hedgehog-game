@@ -12,6 +12,7 @@
  */
 
 import type { Frame } from './gl';
+import { SkylinePacker } from './pack';
 
 export interface Painter {
   /** Unique frame name, e.g. `hedgehog/roll_03`. */
@@ -31,24 +32,33 @@ export interface Painter {
   draw: (ctx: CanvasRenderingContext2D, w: number, h: number) => void;
 }
 
-interface Shelf {
-  y: number;
-  h: number;
-  x: number;
-}
-
 const PAD = 4;
 
 export class Atlas {
   readonly frames = new Map<string, Frame>();
   texture: WebGLTexture | null = null;
   size = 0;
+  /** Packed page dimensions. The page is rectangular, not a square pow2. */
+  width = 0;
+  height = 0;
   /** Bake resolution multiplier actually used. */
   bakeScale = 1;
   /** Diagnostic: fraction of atlas area occupied. */
   occupancy = 0;
-  /** Kept for debug capture — the raw baked canvas. */
-  canvas: HTMLCanvasElement | null = null;
+
+  /**
+   * The bake canvas is NOT kept.
+   *
+   * It used to be held in a `canvas` field "for debug capture", and nothing in
+   * the game or the tools ever read it. A 2D canvas' backing store is four
+   * bytes per pixel of system RAM for as long as the reference lives, and this
+   * one is the full atlas: 16 MB at dpr 1, and 64 MB at dpr 2, which is every
+   * phone. It stayed resident for the life of the process to serve a debug
+   * path that did not exist.
+   *
+   * Anything that wants the baked sheet can read it back off the GPU, which
+   * costs a stall once rather than tens of megabytes forever.
+   */
 
   private painters: Painter[] = [];
 
@@ -87,14 +97,16 @@ export class Atlas {
     const maxTex = gl.getParameter(gl.MAX_TEXTURE_SIZE) as number;
 
     let scale = bakeScale;
-    let size = 0;
+    let pw = 0;
+    let ph = 0;
     let placements: { p: Painter; x: number; y: number; w: number; h: number }[] = [];
 
     // Grow the atlas (or shrink the bake scale) until everything fits.
     for (;;) {
       const packed = this.tryPack(scale, maxTex);
       if (packed) {
-        size = packed.size;
+        pw = packed.w;
+        ph = packed.h;
         placements = packed.placements;
         break;
       }
@@ -103,13 +115,15 @@ export class Atlas {
     }
 
     this.bakeScale = scale;
-    this.size = size;
+    this.width = pw;
+    this.height = ph;
+    this.size = Math.max(pw, ph);
 
     const canvas = document.createElement('canvas');
-    canvas.width = size;
-    canvas.height = size;
+    canvas.width = pw;
+    canvas.height = ph;
     const ctx = canvas.getContext('2d', { alpha: true, willReadFrequently: false })!;
-    ctx.clearRect(0, 0, size, size);
+    ctx.clearRect(0, 0, pw, ph);
 
     let used = 0;
     for (const pl of placements) {
@@ -134,18 +148,17 @@ export class Atlas {
       const inset = 0.5;
       this.frames.set(pl.p.name, {
         tex: null as unknown as WebGLTexture, // patched below
-        u0: (pl.x + inset) / size,
-        v0: (pl.y + inset) / size,
-        u1: (pl.x + pl.w - inset) / size,
-        v1: (pl.y + pl.h - inset) / size,
+        u0: (pl.x + inset) / pw,
+        v0: (pl.y + inset) / ph,
+        u1: (pl.x + pl.w - inset) / pw,
+        v1: (pl.y + pl.h - inset) / ph,
         w: pl.p.w,
         h: pl.p.h,
         px: pl.p.px ?? 0.5,
         py: pl.p.py ?? 0.5,
       });
     }
-    this.occupancy = used / (size * size);
-    this.canvas = canvas;
+    this.occupancy = used / (pw * ph);
 
     const tex = gl.createTexture()!;
     gl.bindTexture(gl.TEXTURE_2D, tex);
@@ -162,18 +175,34 @@ export class Atlas {
     for (const f of this.frames.values()) f.tex = tex;
   }
 
+  /**
+   * Skyline-pack every painter into the smallest rectangle that holds them.
+   *
+   * This was tallest-first shelf packing into a square power of two, and both
+   * halves of that were costing memory. Shelves are as tall as their tallest
+   * member, and this set mixes 96-px glyphs with far taller UI pieces, so it
+   * measured 53% occupancy. Rounding the result up to a square power of two
+   * then paid for the waste twice: at dpr 2 the page was 4096x4096 = 64 MB of
+   * RGBA8 to hold roughly 9 Mpx of art.
+   *
+   * Now it uses the same `SkylinePacker` as the painted atlas and trims the
+   * page to the height actually reached, so the texture costs close to what the
+   * art in it costs. Width is still capped at a power of two (and at the GPU's
+   * limit) because it is the axis the packer searches along; height is whatever
+   * the skyline ends up at, rounded to 4 so rows stay aligned.
+   */
   private tryPack(
     scale: number,
     maxTex: number,
-  ): { size: number; placements: { p: Painter; x: number; y: number; w: number; h: number }[] } | null {
-    // Tallest-first shelf packing: good enough occupancy for a few hundred
-    // sprites and far cheaper than a full bin-packer.
+  ): { w: number; h: number; placements: { p: Painter; x: number; y: number; w: number; h: number }[] } | null {
     const items = this.painters
       .map((p) => ({
         p,
         w: Math.ceil(p.w * scale) + PAD,
         h: Math.ceil(p.h * scale) + PAD,
       }))
+      // Tallest first: the skyline builds from the bottom, so placing the big
+      // pieces while the contour is still flat is what keeps it flat.
       .sort((a, b) => b.h - a.h || b.w - a.w);
 
     let area = 0;
@@ -183,39 +212,31 @@ export class Atlas {
       if (it.w > maxW) maxW = it.w;
     }
 
-    let size = 256;
-    while (size < maxW || size * size < area * 1.35) size *= 2;
+    // Start from the width a perfect packing would need and step up. A wider
+    // page is not automatically worse — it gives the packer more room to fill
+    // low spots — so the first width that fits is taken rather than the
+    // narrowest conceivable one.
+    let w = 256;
+    while (w < maxW || w * w < area) w *= 2;
 
-    for (; size <= maxTex; size *= 2) {
-      const shelves: Shelf[] = [];
+    for (; w <= maxTex; w *= 2) {
+      const packer = new SkylinePacker(w, maxTex);
       const placements: { p: Painter; x: number; y: number; w: number; h: number }[] = [];
-      let cursorY = 0;
       let ok = true;
-
       for (const it of items) {
-        if (it.w > size) return null;
-        let placed = false;
-        for (const sh of shelves) {
-          if (it.h <= sh.h && sh.x + it.w <= size) {
-            placements.push({ p: it.p, x: sh.x, y: sh.y, w: it.w - PAD, h: it.h - PAD });
-            sh.x += it.w;
-            placed = true;
-            break;
-          }
+        const at = packer.add(it.w, it.h);
+        if (!at) {
+          ok = false;
+          break;
         }
-        if (!placed) {
-          if (cursorY + it.h > size) {
-            ok = false;
-            break;
-          }
-          const sh: Shelf = { y: cursorY, h: it.h, x: it.w };
-          shelves.push(sh);
-          placements.push({ p: it.p, x: 0, y: cursorY, w: it.w - PAD, h: it.h - PAD });
-          cursorY += it.h;
-        }
+        placements.push({ p: it.p, x: at.x, y: at.y, w: it.w - PAD, h: it.h - PAD });
       }
-      if (ok) return { size, placements };
+      if (ok) {
+        const h = Math.min(maxTex, Math.ceil(packer.top / 4) * 4);
+        return { w, h, placements };
+      }
     }
     return null;
   }
+
 }
