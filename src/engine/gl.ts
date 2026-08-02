@@ -239,6 +239,16 @@ export interface Frame {
   /** Normalised pivot, 0..1 within the frame (0.5,0.5 = centre). */
   px: number;
   py: number;
+  /**
+   * Every texel is fully opaque, so this frame needs no blending.
+   *
+   * Set from the art manifest, where it is measured at bake time rather than
+   * guessed. Blending is 16-21% of GPU frame time here — the second largest
+   * cost after the clear — and a full-screen backdrop is the single biggest
+   * blended draw in the frame while being exactly the draw that never needs
+   * it. Undefined means "unknown", which is treated as not opaque.
+   */
+  opaque?: boolean;
 }
 
 export class Renderer {
@@ -483,6 +493,7 @@ export class Renderer {
    * additional sky, which is exactly what a side-scroller wants.
    */
   resize(cssW: number, cssH: number, maxDpr = 2): void {
+    this.rectDirty = true;
     const dpr = Math.min(window.devicePixelRatio || 1, maxDpr);
     this.dpr = dpr;
     const pw = Math.max(1, Math.round(cssW * dpr));
@@ -576,20 +587,50 @@ export class Renderer {
     this.resetScaler();
   }
 
+  /**
+   * The canvas' page position, cached.
+   *
+   * `getBoundingClientRect` forces the browser to flush pending layout before
+   * it can answer. Calling it inside the pointer path meant a touch drag —
+   * which delivers a `pointermove` per frame, sometimes coalesced into several
+   * — paid a synchronous reflow per event, on the same thread as the sim.
+   *
+   * The rect only moves when the canvas is resized or the page is scrolled, so
+   * it is read at those moments instead and reused in between. `rectDirty` is
+   * the whole invalidation protocol: anything that could move the canvas sets
+   * it, and the next reader pays for one measurement.
+   */
+  private rectLeft = 0;
+  private rectTop = 0;
+  private rectDirty = true;
+
+  /** Mark the cached page position stale. Cheap; call it liberally. */
+  invalidateRect(): void {
+    this.rectDirty = true;
+  }
+
+  private syncRect(): void {
+    if (!this.rectDirty) return;
+    const r = this.canvas.getBoundingClientRect();
+    this.rectLeft = r.left;
+    this.rectTop = r.top;
+    this.rectDirty = false;
+  }
+
   /** Convert a CSS-pixel pointer position into world coordinates. */
   screenToWorld(clientX: number, clientY: number, out: { x: number; y: number }): void {
-    const r = this.canvas.getBoundingClientRect();
-    const px = (clientX - r.left) * this.dpr;
-    const py = (clientY - r.top) * this.dpr;
+    this.syncRect();
+    const px = (clientX - this.rectLeft) * this.dpr;
+    const py = (clientY - this.rectTop) * this.dpr;
     out.x = (px - this.offsetX) / this.scale;
     out.y = (py - this.offsetY) / this.scale;
   }
 
   /** Convert world coordinates back into CSS-pixel page coordinates. */
   worldToScreen(x: number, y: number, out: { x: number; y: number }): void {
-    const r = this.canvas.getBoundingClientRect();
-    out.x = r.left + (x * this.scale + this.offsetX) / this.dpr;
-    out.y = r.top + (y * this.scale + this.offsetY) / this.dpr;
+    this.syncRect();
+    out.x = this.rectLeft + (x * this.scale + this.offsetX) / this.dpr;
+    out.y = this.rectTop + (y * this.scale + this.offsetY) / this.dpr;
   }
 
   begin(camX = 0, camY = 0, camZoom = 1): void {
@@ -646,6 +687,9 @@ export class Renderer {
     this.drawCalls = 0;
     this.spritesDrawn = 0;
     this.spritesCulled = 0;
+    // A caller that forgot to restore blending must not corrupt the next
+    // frame, so the frame owner re-asserts it rather than trusting the scene.
+    this.setBlendEnabled(true);
     // Start of frame. The clear that follows must land in whatever buffer the
     // world pass is about to draw into, so the target is selected here rather
     // than in `begin()`.
@@ -1087,6 +1131,34 @@ export class Renderer {
     this.slotCount = 0;
     this.lastSlot = 0;
   }
+
+  /**
+   * Turn blending off for draws that provably do not need it, and back on.
+   *
+   * Blending costs 16-21% of GPU frame time here, second only to the clear,
+   * and it is charged per covered pixel. The full-screen backdrops are the
+   * largest blended draws in the frame and the only ones with no transparent
+   * texel in them — `Frame.opaque`, measured at bake time, says so.
+   *
+   * The batcher normally never breaks a batch on state, which is what keeps
+   * the frame at two draw calls; blend mode is encoded per fragment precisely
+   * so it does not have to. This is the one exception, so it is deliberately
+   * an explicit call rather than something inferred per sprite: a pending
+   * batch belongs to the state it was recorded under, so toggling has to
+   * flush. One extra draw call to skip a screen of read-modify-write is a good
+   * trade at one or two backdrops per frame, and a bad one if it were applied
+   * per sprite. Callers must restore it; `resetStats` re-asserts it per frame
+   * so a missed restore cannot leak into the next.
+   */
+  setBlendEnabled(on: boolean): void {
+    if (this.blendOn === on) return;
+    this.flush();
+    this.blendOn = on;
+    if (on) this.gl.enable(this.gl.BLEND);
+    else this.gl.disable(this.gl.BLEND);
+  }
+
+  private blendOn = true;
 
   /**
    * Finish a pass.

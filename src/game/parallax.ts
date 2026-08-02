@@ -170,6 +170,11 @@ function sub(f: Frame, u0: number, u1: number, v0: number, v1: number, py = 0.5)
     h: f.h * (v1 - v0),
     px: 0.5,
     py,
+    // A sub-rectangle of an opaque texture is opaque. Dropping the flag here
+    // would silently cost the backdrop its blend-off path, since every layer
+    // this file draws is a `sub` of the source painting rather than the frame
+    // the loader produced.
+    opaque: f.opaque,
   };
 }
 
@@ -843,8 +848,19 @@ export class Parallax {
     const skySpanH = this.theme!.sky.bottom - skyTop;
     const sk = this.sky!;
     const s1 = this.theme!.sky.tint;
+
+    // The sky and its skirt are the two largest draws in the frame and the
+    // only ones with no transparent texel, so they are the whole reason
+    // `setBlendEnabled` exists. Both are drawn at alpha 1 with a normal-blend tint,
+    // which is exactly the case where `dst = src` and blending is arithmetic
+    // that cannot change the result. Gated on the flag the art manifest
+    // measured, never assumed: a theme whose sky is authored with alpha still
+    // takes the blended path.
+    const skyOpaque = sk.opaque === true && this.skirt!.opaque === true;
+    if (skyOpaque) r.setBlendEnabled(false);
     r.draw(sk, cx, skyTop + skySpanH * 0.5, spanW / sk.w, skySpanH / sk.h, 0, s1[0], s1[1], s1[2], 1);
     r.draw(this.skirt!, cx, this.skirtY, spanW / this.skirt!.w, this.skirtSy, 0, s1[0], s1[1], s1[2], 1);
+    if (skyOpaque) r.setBlendEnabled(true);
 
     // 2 ------------------------------------------------------- far layer
     this.drawLayer(r, this.far!, distance);

@@ -561,6 +561,7 @@ export class AssetLibrary {
           h: pl.d.h,
           px: 0.5,
           py: 0.5,
+          opaque: pl.d.spec.opaque === true,
         });
       }
     }
@@ -594,6 +595,7 @@ export class AssetLibrary {
         h: d.h,
         px: 0.5,
         py: 0.5,
+        opaque: d.spec.opaque === true,
       });
     }
 

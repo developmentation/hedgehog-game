@@ -131,6 +131,12 @@ async function boot(): Promise<void> {
   window.addEventListener('resize', resize);
   window.addEventListener('orientationchange', () => setTimeout(resize, 120));
 
+  // The renderer caches the canvas' page position rather than re-measuring it
+  // per pointer event. Scrolling moves the canvas without resizing it, so it
+  // is the one other thing that has to invalidate the cache. Passive and
+  // capturing, so it still fires for scrolls inside any nested container.
+  window.addEventListener('scroll', () => r.invalidateRect(), { passive: true, capture: true });
+
   window.addEventListener('pagehide', () => save.saveNow());
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
