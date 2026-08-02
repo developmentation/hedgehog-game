@@ -849,18 +849,22 @@ export class Parallax {
     const sk = this.sky!;
     const s1 = this.theme!.sky.tint;
 
-    // The sky and its skirt are the two largest draws in the frame and the
-    // only ones with no transparent texel, so they are the whole reason
-    // `setBlendEnabled` exists. Both are drawn at alpha 1 with a normal-blend tint,
-    // which is exactly the case where `dst = src` and blending is arithmetic
-    // that cannot change the result. Gated on the flag the art manifest
-    // measured, never assumed: a theme whose sky is authored with alpha still
-    // takes the blended path.
-    const skyOpaque = sk.opaque === true && this.skirt!.opaque === true;
-    if (skyOpaque) r.setBlendEnabled(false);
+    // The sky is opaque (`Frame.opaque`, measured at bake time) and so could be
+    // drawn with blending off via `Renderer.setBlendEnabled`. MEASURED, AND IT
+    // DOES NOT PAY HERE — do not re-add it without re-measuring.
+    //
+    // Disabling blending for the whole frame is worth -1.615 ms of 7.292
+    // (-22.1%) on Intel UHD at 2560x1440, which is what makes it tempting. But
+    // that figure is the sum over every blended fragment, and this stack paints
+    // roughly six screens of fill; the sky is one of them. A/B on real hardware:
+    // 7.148 ms without, 7.247 ms with, against 0.144 ms of run-to-run variation
+    // on identical code — no effect, and it costs the pass a third draw call to
+    // break the batch around the toggle.
+    //
+    // It becomes worth revisiting when the backdrop is a larger share of total
+    // fill, or under a depth pre-pass where the opaque layer is doing real work.
     r.draw(sk, cx, skyTop + skySpanH * 0.5, spanW / sk.w, skySpanH / sk.h, 0, s1[0], s1[1], s1[2], 1);
     r.draw(this.skirt!, cx, this.skirtY, spanW / this.skirt!.w, this.skirtSy, 0, s1[0], s1[1], s1[2], 1);
-    if (skyOpaque) r.setBlendEnabled(true);
 
     // 2 ------------------------------------------------------- far layer
     this.drawLayer(r, this.far!, distance);
