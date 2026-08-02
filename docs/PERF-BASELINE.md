@@ -152,3 +152,232 @@ Largest remaining fill:
 
 The game remains GPU-fill bound, not CPU bound: 0.09 ms update + 0.37 ms render
 against a ~20 ms frame.
+
+---
+
+# Render-scale pass
+
+The previous pass took overdraw from 6.83x to 4.60x and stopped, correctly, at
+the point where going further meant drawing fewer parallax planes. This pass
+does not touch content at all. It attacks the other half of the fill equation.
+
+Fill cost is `overdraw x device pixels`. Overdraw was already down to what the
+art actually needs. Device pixels were untouched: a 1280x720 CSS stage on a 2x
+display rasterises 2560x1440 = **3.69 million pixels**, and at 4.6x that is
+~17 million fragment shades per frame. Nothing had ever questioned the second
+number.
+
+## Method note: why the numbers here are GPU times, not frame rates
+
+Wall-clock fps could not measure this. The test machine presents at 143 Hz, so
+every render scale from 1.0 down to 0.5 reported an identical 7.0 ms frame —
+the frame rate was pinned by the display, not by the work. Disabling vsync
+(`--disable-gpu-vsync`) did not help; rAF cadence simply moved to ~57 Hz and
+pinned there instead. Three other agents were also running headed browsers on
+this machine throughout, and run-to-run fps on the same build varied 78 to 143.
+
+So the measurements below use `EXT_disjoint_timer_query_webgl2` — the GPU's own
+clock, wrapped around exactly the commands one frame submits. It is immune to
+vsync, to rAF, and to whatever else is running. Every comparison is also
+**interleaved within one browser session**: the harness cycles round-robin
+through the configurations for 8-10 rounds of 1.5 s each, so ambient load hits
+every arm equally instead of landing on whichever arm ran while a build was
+going.
+
+## 1. Render scale — the measured curve
+
+Headed, real GPU, 1280x720 @ dsf 2, mid-run with letter columns on screen.
+10 interleaved rounds. World pass at reduced scale, HUD always native.
+
+| render scale | world pass rasterises | GPU ms p50 | vs native |
+|---|---|---|---|
+| **1.00** (default) | 2560x1440 | **7.49** | — |
+| 0.85 | 2176x1224 | 5.87 | **-22%** |
+| 0.72 | 1843x1037 | 5.00 | **-33%** |
+| 0.60 | 1536x864 | 4.31 | **-42%** |
+| 0.50 | 1280x720 | 4.04 | **-46%** |
+
+A second run on the same build, taken an hour apart: 7.48 / 6.71 / 5.66 / 4.56
+/ 3.61 ms. Same shape, same endpoints.
+
+Fitting `t = a + b*s^2` gives b ~ 6.5 ms and a ~ 0.9 ms: **87% of the GPU frame
+is world-pass fill** and scales with the square of the render scale, which is
+what "fill-bound" means quantitatively. The residue is the native HUD pass.
+
+Frame rates, from an earlier set of runs taken while the machine was loaded
+enough to sit below the 143 Hz cap: 103 fps at native, 120 at 0.72, 136 at 0.6,
+142 at 0.5.
+
+Overdraw is unchanged — 4.60x, of which 3.92x is the world pass and 0.68x the
+HUD. That is the point. Overdraw is a geometry ratio; it is invariant under
+resolution. The fill that was removed does not show up in it at all, which is
+why the previous pass's 4.60x figure was never going to move again without
+cutting planes.
+
+## 2. What keeping the HUD sharp costs
+
+The world renders into an offscreen buffer and is blitted up; the HUD then
+draws at native straight into the default framebuffer. The alternative is to
+shrink the canvas backing store and let the compositor upscale the whole frame
+— no blit, but the glyphs and HUD rings soften too. Measured side by side at
+the same pixel budget, same session:
+
+| | GPU ms p50 |
+|---|---|
+| native | 7.96 |
+| render scale 0.72, HUD native (**shipped**) | 5.58 |
+| whole canvas at 1.44x dpr, HUD scaled too | 4.79 |
+| render scale 0.50, HUD native | 4.20 |
+| whole canvas at 1.0x dpr, HUD scaled too | 3.09 |
+
+Keeping the HUD native costs **0.78 ms**, about 10% of a native frame, and it
+buys back the one part of the image that a resample visibly destroys. Verified
+by eye: at 0.6 the foliage, bark and canopy soften, while SCORE, the hearts,
+HINT, JUMP, PAUSE and the letter tiles are pixel-for-pixel what they are at
+native. The trade is worth it; the blit is also why scales above ~0.85 are not
+worth taking, since the fixed blit eats the saving.
+
+## 3. Depth-based early-out — measured, and no
+
+The context still asks for `depth: false`. Three measurements say a depth
+pre-pass would cost more than it could ever recover.
+
+**a. Only one asset in the game is opaque.** From the art manifest, ink
+coverage within each quad:
+
+| asset | opaque | coverage |
+|---|---|---|
+| sky_dusk | **yes** | 1.00 |
+| tree_oak | no | 0.57 |
+| canopy_overhang | no | 0.39 |
+| ground_slab | no | 0.36 |
+| hills_mid | no | 0.18 |
+| mountains_far | no | 0.17 |
+
+The sky is the only quad that can write depth without an alpha test — and it is
+the backmost thing drawn, so it occludes nothing. Everything in front of it is
+17-57% ink. An alpha-tested depth pre-pass over those would need the texture
+fetch and a `discard`, which disables early-Z on the pre-pass itself: it would
+be a second full shading pass wearing a hat.
+
+**b. The occlusion ceiling is 0.03%.** Rasterising every world-pass quad into a
+160x90 coverage grid in draw order, and measuring the area covered by a *later
+fully-opaque* quad — exactly the fill a front-to-back depth test could skip:
+
+```
+world-pass fill      3.959 screens
+occluded by opaque   0.001 screens   (0.03%)
+```
+
+**c. The cost side is 1.3 screens.** A pre-pass would rasterise sky (0.79) plus
+ground (0.52) of depth-only fill to recover 0.001 screens of shading.
+
+The reason the ceiling is that low is that the previous pass already did the
+job by hand: every band was cropped to the strip where it is the frontmost
+thing painted. Static geometric cropping is a depth pre-pass computed once at
+build time instead of every frame. There is nothing left for the hardware to
+find.
+
+## 4. GPU cost of each backdrop layer
+
+Measured by suppressing a layer's submissions and diffing GPU time, interleaved
+within one session (native, 7.90 ms baseline):
+
+| suppressed | GPU ms | saving | overdraw removed |
+|---|---|---|---|
+| sky_dusk | 6.86 | **1.05 ms** | 0.79x |
+| mountains_far + hills_mid | 6.92 | 0.99 ms | 0.80x |
+| ground_slab | 7.06 | 0.84 ms | 0.52x |
+| all four | 4.97 | **2.94 ms** | 2.38x |
+
+The backdrop is **37% of the GPU frame**. That is the number any future
+"fewer planes" art decision should be weighed against — and 0.6 render scale
+already recovers more than removing the entire sky would.
+
+## 5. The adaptive controller
+
+`Renderer.tickScaler(dt)` is fed each frame's wall time from the loop; the
+control laws and the reasoning behind each threshold are documented in `gl.ts`.
+In short: a 24-frame window judged at p70, step down at 1.1x budget, probe up
+when the budget is met on two consecutive windows, and a failed probe pins a
+ceiling that only lifts after a doubling backoff. Warm-up is 2 s after boot or
+resize, because the frames right after either are the worst of the session and
+judging on them opened the game soft on hardware that could run it native.
+
+Measured, real GPU, target 32 fps, load applied as 24 extra full-screen opaque
+repaints inside the world pass (a real ~25 ms of fill, not a fake number):
+
+```
+t= 0.0-13.1   climbs to and holds scale 1.00      at rest, native
+--- LOAD ON ---
+t=15.35       1.00 -> 0.85   frame 34.7ms
+t=16.49       0.85 -> 0.72   frame 30.6ms
+t=17.38       0.72 -> 0.60   frame 24.3ms         2.0 s to shed the load
+t=18.61       probes 0.72                         frame 19.5ms
+t=20.37       0.72 -> 0.60   probe did not hold -> ceiling pinned at 0.60
+t=20.4-35.0   holds 0.60, no further movement     15 s, zero churn
+--- LOAD OFF ---
+t=40.93       ceiling retry fires, 0.60 -> 0.72
+t=41-61       holds 0.72
+```
+
+The single up-down pair at t=18.6/20.4 is the designed maximum: a failed probe
+raises the ceiling, so the same rung is never retried until the backoff timer
+expires. On SwiftShader the ladder walks down 1.00 -> 0.50 within a second of
+the loop starting, which is the case it exists for.
+
+**Hooks.** `window.__renderScale()` reports and returns control to automatic;
+`__renderScale(0.6)` pins; `__renderScale(1, 45)` pins and moves the target.
+`?rs=0.72` and `?rs=auto&fps=50` do the same from the URL. `__perf` gained
+`renderScale`, `autoScale` and `worldMpx`, and the debug overlay shows them.
+
+**Not done: persistence.** `main.ts` reads `save.profile.settings.renderScale`
+defensively and honours it if it appears, but `save.ts` belongs to another
+agent and the field does not exist. Adding `renderScale?: number` to the
+`settings` object in `emptyProfile()` is the whole remaining change; the
+renderer side is already wired.
+
+## 6. No visual regression at native
+
+Proven within one build and one session, on one frozen pose (loop stopped,
+`time` pinned, shake zeroed), rendering the same frame three times:
+
+| | mean delta | max |
+|---|---|---|
+| native vs native-again, after the offscreen path had been used | **0.0000/255** | **0** |
+| native vs render scale 0.60 | 3.53/255 | 236 |
+
+Bit-identical. At `renderScale === 1` the offscreen buffer is never created and
+the renderer binds the default framebuffer with the viewport `resize()` already
+set, so the draw sequence is the unscaled renderer unchanged — the zero is a
+consequence of that, not a coincidence. The second row is the resample, and
+inspecting it confirms the split works: world softens, HUD does not.
+
+The portrait letterbox path was checked separately at 390x844 @ dsf 3 with
+`rs=0.6`: the rendered band lands on exactly the same pixels as at native and
+the bars are untouched, because the blit copies the whole buffer rather than
+the band.
+
+## Verification
+
+`npx tsc --noEmit` clean. `npx vite build` clean. Headed run reaches
+`celebrate`; zero console errors other than the browser's automatic
+`/favicon.ico` probe. `__raw` and `__grade` both still behave. Draw calls
+still 2, frustum culling and cross-texture batching untouched, no per-frame
+allocation added (the controller's two 24-element `Float32Array`s are
+allocated once).
+
+## Summary
+
+| metric | before | after |
+|---|---|---|
+| GPU ms, native | 7.49 | 7.49 (unchanged by design) |
+| GPU ms, adaptive under load | 7.49, or dropped frames | **4.3 at 0.60** |
+| fill reduction available | none | **22% / 33% / 42% / 46%** at 0.85 / 0.72 / 0.60 / 0.50 |
+| overdraw | 4.60x | 4.60x (invariant under resolution) |
+| draw calls | 2 | 2 |
+| default look at rest | — | **bit-identical** |
+
+Biggest remaining fill cost: the backdrop, 2.94 ms of a 7.49 ms frame, of which
+the sky alone is 1.05 ms. Removing it needs fewer parallax planes — still an
+art decision, and now one with a price tag attached.

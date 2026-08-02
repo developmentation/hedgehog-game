@@ -764,6 +764,10 @@ export class Renderer {
     // compositing) one comfortable window is not evidence of headroom, it is
     // evidence of a gap. Asking for two costs at most an extra third of a
     // second before recovering and removes most of the needless probing.
+    // The backoff clock runs on every comfortable window, independently of
+    // the probe gate below — it is measuring how long the machine has had room
+    // to spare, not how many times we have thought about asking.
+    this.quiet += elapsed;
     if (++this.upStreak < 2) return;
     this.upStreak = 0;
     if (this.scaleStep > this.ceiling) {
@@ -772,10 +776,10 @@ export class Renderer {
       this.cooldown = 1.2;
       this.lastStepDir = 1;
       this.sinceStep = 0;
+      this.quiet = 0;
       return;
     }
     if (this.scaleStep > 0 && this.scaleStep === this.ceiling) {
-      this.quiet += elapsed;
       const retry = Math.min(120, 20 * Math.pow(2, this.ceilFails - 1));
       if (this.quiet >= retry) {
         // Long enough with room to spare that the load has plausibly changed.
