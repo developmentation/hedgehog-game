@@ -1,14 +1,27 @@
 /**
  * WebGL2 instanced sprite batcher.
  *
- * One draw call per (texture, blend-mode) run. Instance data is written into a
- * single interleaved Float32Array and uploaded with one bufferSubData per flush.
+ * Nothing about a sprite breaks the batch. A run spans up to `TEX_SLOTS`
+ * textures at once — each instance carries the texture unit it samples from —
+ * and both blend modes at once, because additive is expressed in the shader
+ * rather than as pipeline state. So a whole pass is normally a single draw
+ * call, and only running out of texture slots or instance capacity ends one.
  *
- * Per-instance layout (16 floats / 64 bytes):
+ * That matters here because the draw order is fixed by depth (backdrop, props,
+ * ground, props, blocks, hero, foliage), alternates between the painted
+ * layers, the packed art atlas and the procedural atlas several times per
+ * frame, and toggles additive on for every glow and spark. Binding one texture
+ * per batch and switching blend state cost 15-17 draw calls for six textures.
+ *
+ * Instance data is written into a single interleaved Float32Array and uploaded
+ * with one bufferSubData per flush.
+ *
+ * Per-instance layout (17 floats / 68 bytes):
  *   0..3   a_xform   : x, y, halfW, halfH        (world units, pre-rotation half-extents)
  *   4..7   a_rot     : cos, sin, pivotX, pivotY  (pivot in [-1..1] local quad space)
  *   8..11  a_uv      : u0, v0, u1, v1
  *   12..15 a_color   : r, g, b, a                (premultiplied at shade time)
+ *   16     a_mode    : texture slot 0..7, plus bit 3 for additive
  */
 
 export const enum Blend {
@@ -16,8 +29,31 @@ export const enum Blend {
   Additive = 1,
 }
 
-const FLOATS_PER_INSTANCE = 16;
+const FLOATS_PER_INSTANCE = 17;
 const BYTES_PER_INSTANCE = FLOATS_PER_INSTANCE * 4;
+
+/**
+ * Textures a single batch can sample from.
+ *
+ * Eight covers the whole game (four painted layers, the packed art atlas and
+ * the procedural atlas) with room to spare, and WebGL2 guarantees at least
+ * sixteen fragment texture units, so the slot count never has to be negotiated
+ * with the driver. The selector in the fragment shader is a three-deep binary
+ * split rather than a linear chain, so it costs three comparisons, not eight —
+ * this game is fill-rate bound and the selector runs per fragment.
+ */
+const TEX_SLOTS = 8;
+
+/**
+ * Slack, in world units, on the frustum-rejection test.
+ *
+ * Zero, and exact. The projection maps the cull rect onto the viewport
+ * boundary for boundary, so a quad whose bounding box only touches the rect
+ * covers no pixel centre and can be dropped; the box is an AABB and therefore
+ * already conservative for a rotated sprite. A pixel of world space is worth
+ * ~1e-4 units of float error here, four orders below one device pixel.
+ */
+const CULL_PAD = 0;
 
 const VERT = `#version 300 es
 precision highp float;
@@ -27,13 +63,16 @@ layout(location=1) in vec4 a_xform;    // x, y, halfW, halfH
 layout(location=2) in vec4 a_rot;      // cos, sin, pivotX, pivotY
 layout(location=3) in vec4 a_uv;       // u0, v0, u1, v1
 layout(location=4) in vec4 a_color;
+layout(location=5) in float a_mode;    // texture slot | 8 when additive
 
 uniform mat4 u_proj;
 
 out vec2 v_uv;
 out vec4 v_color;
+flat out int v_mode;
 
 void main() {
+  v_mode = int(a_mode);
   vec2 local = (a_corner - a_rot.zw) * a_xform.zw;
   vec2 rotated = vec2(
     local.x * a_rot.x - local.y * a_rot.y,
@@ -51,25 +90,46 @@ precision mediump float;
 
 in vec2 v_uv;
 in vec4 v_color;
+flat in int v_mode;
 
-uniform sampler2D u_tex;
+uniform sampler2D u_tex[8];
 uniform vec2 u_grade;
 
 out vec4 fragColor;
 
 void main() {
-  vec4 texel = texture(u_tex, v_uv);
+  // Texture select. Constant indices only (GLSL ES 3.00 forbids a dynamic
+  // index into a sampler array), split binary so the deepest path is three
+  // comparisons.
+  int slot = v_mode & 7;
+  vec4 texel;
+  if (slot < 4) {
+    if (slot < 2) {
+      if (slot < 1) texel = texture(u_tex[0], v_uv);
+      else texel = texture(u_tex[1], v_uv);
+    } else {
+      if (slot < 3) texel = texture(u_tex[2], v_uv);
+      else texel = texture(u_tex[3], v_uv);
+    }
+  } else {
+    if (slot < 6) {
+      if (slot < 5) texel = texture(u_tex[4], v_uv);
+      else texel = texture(u_tex[5], v_uv);
+    } else {
+      if (slot < 7) texel = texture(u_tex[6], v_uv);
+      else texel = texture(u_tex[7], v_uv);
+    }
+  }
   vec4 c = texel * v_color;
   if (c.a < 0.0025) discard;
 
   // Global grade, applied per fragment before compositing.
   //
-  // The backdrop is built by slicing each layer into bands and redrawing it
-  // per tile, so a single frame composites roughly 20 layers of the hills art,
-  // 16 of the ground and 53 of the tree art on top of each other. That
-  // accumulation is what drives the frame hotter and more saturated than the
-  // source paintings, and it cannot be dialled out layer by layer without
-  // destroying the depth banding that needs those passes.
+  // Eleven parallax planes, each tiled across the frame, still composite over
+  // one another several deep in places, and that accumulation can drive the
+  // frame hotter and more saturated than the source paintings. It cannot be
+  // dialled out layer by layer without changing the depth relationships the
+  // layers exist for.
   //
   // So it is corrected once, here, at the end: u_grade.x scales exposure and
   // u_grade.y pulls saturation back toward luma. Both default to 1.0, which is
@@ -77,9 +137,32 @@ void main() {
   vec3 g = c.rgb * u_grade.x;
   float luma = dot(g, vec3(0.2126, 0.7152, 0.0722));
   g = mix(vec3(luma), g, u_grade.y);
-  g = clamp(g, 0.0, 1.0);
 
-  fragColor = vec4(g * c.a, c.a); // premultiplied output
+  // Anti-banding dither, half a code deep.
+  //
+  // The sky is one 8-bit gradient stretched over the whole viewport, so its
+  // steps land as horizontal stripes several pixels apart. That used to be
+  // hidden by drawing the entire sky three times — the base plus two offset
+  // copies at 5.5% alpha — which averaged the staircase away at the price of
+  // 1.3 screens of extra fill every frame, on the single largest quad in the
+  // game. Interleaved-gradient noise does the same job in four ALU ops on
+  // fragments that were being shaded anyway: two fracts and a dot, no texture
+  // fetch, no extra geometry. Amplitude is one quantisation step peak to peak,
+  // which is exactly enough to break a contour and far too little to see.
+  float dither = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+  g = clamp(g + (dither - 0.5) * (1.0 / 255.0), 0.0, 1.0);
+
+  // Additive without a second blend mode.
+  //
+  // Output is premultiplied and the pipeline blends ONE / ONE_MINUS_SRC_ALPHA,
+  // so a fragment that emits zero alpha leaves the destination untouched and
+  // simply adds its colour: dst' = rgb*a + dst*(1-0). That is exactly what
+  // ONE / ONE destination-blending did, arithmetic for arithmetic, on a
+  // colour buffer with no alpha channel to care about. Doing it per fragment
+  // instead of per blend state is what lets a whole pass be one draw call:
+  // glow, sparks and the hero's rim light no longer chop the frame into runs.
+  float outA = (v_mode & 8) != 0 ? 0.0 : c.a;
+  fragColor = vec4(g * c.a, outA); // premultiplied output
 }`;
 
 function compile(gl: WebGL2RenderingContext, type: number, src: string): WebGLShader {
@@ -175,13 +258,20 @@ export class Renderer {
   private count = 0;
   private capacity: number;
 
-  private curTex: WebGLTexture | null = null;
-  private curBlend: Blend = Blend.Normal;
+  /** Textures bound to units 0..slotCount-1 for the batch being built. */
+  private slots: (WebGLTexture | null)[] = new Array(TEX_SLOTS).fill(null);
+  private slotCount = 0;
+  /** Slot the previous sprite used — almost always the right answer again. */
+  private lastSlot = 0;
+  /** Instance mode bit for the current blend: 0 normal, 8 additive. */
+  private curBlend = 0;
   private proj = new Float32Array(16);
 
   /** Draw calls issued during the last frame — surfaced to the perf HUD. */
   drawCalls = 0;
   spritesDrawn = 0;
+  /** Sprites rejected by the frustum test during the last frame. */
+  spritesCulled = 0;
 
   constructor(canvas: HTMLCanvasElement, capacity = 16384) {
     this.canvas = canvas;
@@ -228,6 +318,9 @@ export class Renderer {
       gl.vertexAttribPointer(loc, 4, gl.FLOAT, false, BYTES_PER_INSTANCE, i * 16);
       gl.vertexAttribDivisor(loc, 1);
     }
+    gl.enableVertexAttribArray(5);
+    gl.vertexAttribPointer(5, 1, gl.FLOAT, false, BYTES_PER_INSTANCE, 64);
+    gl.vertexAttribDivisor(5, 1);
 
     gl.bindVertexArray(null);
 
@@ -236,7 +329,9 @@ export class Renderer {
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
     gl.useProgram(this.prog);
-    gl.uniform1i(gl.getUniformLocation(this.prog, 'u_tex'), 0);
+    const units = new Int32Array(TEX_SLOTS);
+    for (let i = 0; i < TEX_SLOTS; i++) units[i] = i;
+    gl.uniform1iv(gl.getUniformLocation(this.prog, 'u_tex'), units);
   }
 
   /**
@@ -253,6 +348,17 @@ export class Renderer {
   viewBottom = 720;
   viewLeft = 0;
   viewRight = 1280;
+
+  /**
+   * The same rectangle after the current pass's camera, which is what sprites
+   * are actually tested against. Recomputed by `begin()`; the world pass has a
+   * shaken, zoomable camera and the HUD pass does not, so the two passes cull
+   * against different rects.
+   */
+  private cullL = 0;
+  private cullR = 0;
+  private cullT = 0;
+  private cullB = 0;
 
   /** Rendered band in device pixels. Equals the canvas unless portrait-capped. */
   private vpY = 0;
@@ -410,9 +516,20 @@ export class Renderer {
     gl.uniformMatrix4fv(this.uProj, false, p);
     gl.uniform2f(this.uGrade, this.grade[0], this.grade[1]);
 
+    // World rect this projection actually maps onto the viewport. Inverting
+    // the matrix above at its two clip-space corners gives exactly the view
+    // rect scaled by the zoom and slid by the camera, which is what `draw`
+    // rejects sprites against.
+    const iz = 1 / camZoom;
+    this.cullL = camX + this.viewLeft * iz - CULL_PAD;
+    this.cullR = camX + this.viewRight * iz + CULL_PAD;
+    this.cullT = camY + this.viewTop * iz - CULL_PAD;
+    this.cullB = camY + this.viewBottom * iz + CULL_PAD;
+
     this.count = 0;
-    this.curTex = null;
-    this.setBlend(Blend.Normal);
+    this.slotCount = 0;
+    this.lastSlot = 0;
+    this.curBlend = 0;
   }
 
   /**
@@ -426,29 +543,29 @@ export class Renderer {
   resetStats(): void {
     this.drawCalls = 0;
     this.spritesDrawn = 0;
+    this.spritesCulled = 0;
   }
 
+  /**
+   * Select the blend mode for subsequent sprites.
+   *
+   * No longer a pipeline state change, and so no longer a batch break: the
+   * mode rides along on each instance and the fragment shader implements it
+   * (see FRAG). Callers can toggle as freely as they like.
+   */
   setBlend(mode: Blend): void {
-    if (mode === this.curBlend && this.count === 0 && this.curTex === null) {
-      this.applyBlend(mode);
-      return;
-    }
-    if (mode !== this.curBlend) {
-      this.flush();
-      this.curBlend = mode;
-      this.applyBlend(mode);
-    }
-  }
-
-  private applyBlend(mode: Blend): void {
-    const gl = this.gl;
-    if (mode === Blend.Additive) gl.blendFunc(gl.ONE, gl.ONE);
-    else gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    this.curBlend = mode === Blend.Additive ? 8 : 0;
   }
 
   /**
    * Queue a sprite. `rot` is radians. Colour components are 0..1 and multiply
    * the texel; alpha drives both tint and coverage.
+   *
+   * Sprites whose bounding box misses the view are rejected here rather than
+   * uploaded and rasterised. The scrolling rows and tiled layers all keep a
+   * margin of off-screen pieces alive so nothing pops at the edges, so a
+   * frame submits a couple of dozen quads that cannot produce a fragment; the
+   * test below costs a handful of multiplies and no allocation.
    */
   draw(
     f: Frame,
@@ -463,35 +580,79 @@ export class Renderer {
     a = 1,
   ): void {
     if (a <= 0.0025) return;
+
+    const hw = f.w * 0.5 * scaleX;
+    const hh = f.h * 0.5 * scaleY;
+    // The quad's corners are (corner - pivot) * half-extent, so the pivot
+    // offsets the box's centre; a mirrored sprite has a negative half-extent.
+    const ox = (0.5 - f.px) * 2 * hw;
+    const oy = (0.5 - f.py) * 2 * hh;
+    let ex = hw < 0 ? -hw : hw;
+    let ey = hh < 0 ? -hh : hh;
+    let cx: number;
+    let cy: number;
+    let rc = 1;
+    let rs = 0;
+    if (rot === 0) {
+      cx = x + ox;
+      cy = y + oy;
+    } else {
+      rc = Math.cos(rot);
+      rs = Math.sin(rot);
+      cx = x + ox * rc - oy * rs;
+      cy = y + ox * rs + oy * rc;
+      const ac = rc < 0 ? -rc : rc;
+      const as = rs < 0 ? -rs : rs;
+      const w = ac * ex + as * ey;
+      ey = as * ex + ac * ey;
+      ex = w;
+    }
+    if (
+      cx + ex < this.cullL ||
+      cx - ex > this.cullR ||
+      cy + ey < this.cullT ||
+      cy - ey > this.cullB
+    ) {
+      this.spritesCulled++;
+      return;
+    }
+
     if (this.rawMode && this.rawTextures.has(f.tex)) {
       r = 1;
       g = 1;
       b = 1;
     }
-    if (this.curTex !== f.tex) {
-      this.flush();
-      this.curTex = f.tex;
-    }
     if (this.count >= this.capacity) this.flush();
+
+    // Texture slot. Runs of sprites share a texture, so the previous slot is
+    // nearly always a hit and the linear scan almost never runs.
+    let slot = this.lastSlot;
+    if (slot >= this.slotCount || this.slots[slot] !== f.tex) {
+      slot = -1;
+      for (let i = 0; i < this.slotCount; i++) {
+        if (this.slots[i] === f.tex) {
+          slot = i;
+          break;
+        }
+      }
+      if (slot < 0) {
+        if (this.slotCount === TEX_SLOTS) this.flush();
+        slot = this.slotCount++;
+        this.slots[slot] = f.tex;
+      }
+      this.lastSlot = slot;
+    }
 
     const d = this.data;
     let o = this.count * FLOATS_PER_INSTANCE;
-
-    const hw = f.w * 0.5 * scaleX;
-    const hh = f.h * 0.5 * scaleY;
 
     d[o++] = x;
     d[o++] = y;
     d[o++] = hw;
     d[o++] = hh;
 
-    if (rot === 0) {
-      d[o++] = 1;
-      d[o++] = 0;
-    } else {
-      d[o++] = Math.cos(rot);
-      d[o++] = Math.sin(rot);
-    }
+    d[o++] = rc;
+    d[o++] = rs;
     // Pivot expressed in -1..1 quad space.
     d[o++] = f.px * 2 - 1;
     d[o++] = f.py * 2 - 1;
@@ -506,17 +667,22 @@ export class Renderer {
     d[o++] = b;
     d[o++] = a;
 
+    d[o++] = slot | this.curBlend;
+
     this.count++;
   }
 
   flush(): void {
-    if (this.count === 0 || !this.curTex) {
-      this.count = 0;
+    if (this.count === 0) {
+      this.slotCount = 0;
+      this.lastSlot = 0;
       return;
     }
     const gl = this.gl;
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, this.curTex);
+    for (let i = 0; i < this.slotCount; i++) {
+      gl.activeTexture(gl.TEXTURE0 + i);
+      gl.bindTexture(gl.TEXTURE_2D, this.slots[i]);
+    }
     gl.bindBuffer(gl.ARRAY_BUFFER, this.instanceVBO);
     gl.bufferSubData(
       gl.ARRAY_BUFFER,
@@ -529,6 +695,8 @@ export class Renderer {
     this.drawCalls++;
     this.spritesDrawn += this.count;
     this.count = 0;
+    this.slotCount = 0;
+    this.lastSlot = 0;
   }
 
   end(): void {

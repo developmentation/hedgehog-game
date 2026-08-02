@@ -3,7 +3,7 @@
  *
  * Eleven depth bands, nine distinct scroll rates:
  *
- *   sky (static, with drifting cirrus)  ->  far mountains 0.04
+ *   sky (static, with a lit cloud bank)  ->  far mountains 0.04
  *   ->  mid hills 0.15  ->  ridge forest 0.27  ->  tall mass 0.60
  *   ->  grass bank 0.84  ->  ground + near scatter 1.0
  *   ->  foreground foliage 1.42  ->  hanging vines 2.00
@@ -55,18 +55,16 @@
  * sweeps across the hero's column. Depth is worth having only while the game
  * stays readable through it.
  *
- * **One batch per texture.** The generated art lives on five textures (sky,
- * mountains, hills, ground, shared sprite atlas) and the layer order is chosen
- * so each is touched once — twice for the atlas, which is both the mid-ground
- * tree mass and the near scatter. The grass bank and the fringe row cost
- * nothing at all because each is drawn adjacent to a pass that has already
- * bound its texture; the haze, the scrim, the rake, the dusk shade and the
- * cirrus are sub-rectangles of textures already bound, so they are free too,
- * and so is the sunlit cloud bank, which shares the atlas bind with the ridge
- * row drawn immediately after it. Measured at 17 draw calls for the entire
- * frame, world and HUD together — one fewer than before the palette work, and
- * every highlight in here was bought without spending one. Nothing allocates
- * after `init()`.
+ * **Fill is the budget, not draw calls.** The batcher samples eight textures
+ * and both blend modes inside one draw call now, so the layer order is free to
+ * be whatever depth demands — the whole world pass is a single call. What
+ * costs is fragments: this scene is GPU fill-bound, and every quad in here is
+ * paid for at its full rectangle whether or not the painting inside it covers
+ * anything. So the rules are: draw each layer once (never a stack of alpha
+ * bands faking haze), size each quad to the strip of screen where that layer
+ * is the frontmost thing painted, and crop every sprite to the box its ink
+ * actually occupies. Measured at 2 draw calls and 4.6 screens of overdraw for
+ * the entire frame, world and HUD together. Nothing allocates after `init()`.
  *
  * Every generated asset is optional. With none present the module falls back
  * to the procedural shapes the game shipped with and still runs.
@@ -197,7 +195,6 @@ const SKY_BOTTOM = 474;
  * choosing what to draw, not by over-driving what is already painted.
  */
 const SKY_C: [number, number, number] = [1, 1, 1];
-const SKY_C2: [number, number, number] = [1, 1, 1];
 
 /** Screen line the far layers bottom out on — under the ground, so no seam. */
 const FAR_BASE = 596;
@@ -229,21 +226,39 @@ const BANDS = 8;
  * Prop content boxes, as fractions of the matted frame. `bot` places the
  * sprite's pivot on its own footprint so props plant on the ground line
  * instead of floating; `span` converts a wanted screen height into a scale.
+ *
+ * `u0/u1/v0/v1` is the *ink* box: the tightest rectangle outside which the
+ * painting has nothing left above about 18% alpha. Every generated asset is
+ * matted onto a fixed square or 2:3 canvas, and a matte is fill the GPU pays
+ * for in full — a grass tuft occupying the middle two fifths of a 460x460
+ * frame costs as much to rasterise as a solid one. Measured off the alpha
+ * channel, not eyeballed: outside these boxes each asset carries between 0.01%
+ * and 0.03% of its total ink, in a dust of pixels that never exceeds alpha 76
+ * and is under 16 at the 99.9th percentile. Cropping to them is invisible and
+ * takes 10-60% off the quad.
+ *
+ * The pivot is re-registered onto the crop (see `trimmed`), so `bot`, `span`
+ * and every scale and position that depends on them keep their old meaning:
+ * a trimmed prop lands in exactly the same place at exactly the same size.
  */
 interface Spec {
   id: string;
   bot: number;
   span: number;
+  u0?: number;
+  u1?: number;
+  v0?: number;
+  v1?: number;
 }
 
 const PROPS: Spec[] = [
-  { id: 'bush_round', bot: 0.886, span: 0.766 },
-  { id: 'rock_mossy', bot: 0.855, span: 0.726 },
-  { id: 'rock_small_pair', bot: 0.786, span: 0.553 },
-  { id: 'mushroom_cluster', bot: 0.952, span: 0.893 },
-  { id: 'fern_cluster', bot: 0.965, span: 0.927 },
-  { id: 'grass_tuft_a', bot: 0.954, span: 0.911 },
-  { id: 'grass_tuft_b', bot: 0.767, span: 0.478 },
+  { id: 'bush_round', bot: 0.886, span: 0.766, u0: 0.042, u1: 0.958, v0: 0.108, v1: 0.897 },
+  { id: 'rock_mossy', bot: 0.855, span: 0.726, u0: 0.038, u1: 0.962, v0: 0.117, v1: 0.867 },
+  { id: 'rock_small_pair', bot: 0.786, span: 0.553, u0: 0.014, u1: 0.989, v0: 0.221, v1: 0.8 },
+  { id: 'mushroom_cluster', bot: 0.952, span: 0.893, u0: 0.09, u1: 0.939, v0: 0.049, v1: 0.965 },
+  { id: 'fern_cluster', bot: 0.965, span: 0.927, u0: 0.023, u1: 0.97, v0: 0.028, v1: 0.979 },
+  { id: 'grass_tuft_a', bot: 0.954, span: 0.911, u0: 0.049, u1: 0.921, v0: 0.033, v1: 0.969 },
+  { id: 'grass_tuft_b', bot: 0.767, span: 0.478, u0: 0.025, u1: 0.977, v0: 0.277, v1: 0.782 },
 ];
 
 const NEAR_IDX = [0, 1, 2, 3, 4, 5, 6];
@@ -259,13 +274,19 @@ const FORE_IDX = [4, 5, 6, 0];
  */
 const FRINGE_IDX = [5, 6, 4, 5, 6];
 
-/** The vertical mass. Same measured content box, on much taller art. */
+/**
+ * The vertical mass. Same measured content box, on much taller art.
+ *
+ * The ink boxes matter most here, because these are the biggest quads in the
+ * scene and the narrowest paintings: a spire is 42% of its frame's width and a
+ * pine 59%, so more than half of what those quads used to rasterise was matte.
+ */
 const TREES: Spec[] = [
-  { id: 'cliff_column', bot: 0.9775, span: 0.9492 },
-  { id: 'tree_oak', bot: 0.9791, span: 0.9609 },
-  { id: 'tree_pine', bot: 0.9782, span: 0.95 },
-  { id: 'tree_birch_cluster', bot: 0.99, span: 0.97 },
-  { id: 'tree_willow', bot: 0.9464, span: 0.9019 },
+  { id: 'cliff_column', bot: 0.9775, span: 0.9492, u0: 0.279, u1: 0.721, v0: 0.018, v1: 0.988 },
+  { id: 'tree_oak', bot: 0.9791, span: 0.9609, u0: 0.028, u1: 0.985, v0: 0.008, v1: 0.99 },
+  { id: 'tree_pine', bot: 0.9782, span: 0.95, u0: 0.216, u1: 0.826, v0: 0.017, v1: 0.989 },
+  { id: 'tree_birch_cluster', bot: 0.99, span: 0.97, u0: 0.174, u1: 0.856, v0: 0.01, v1: 1 },
+  { id: 'tree_willow', bot: 0.9464, span: 0.9019, u0: 0.05, u1: 0.951, v0: 0.034, v1: 0.956 },
 ];
 
 /** Horizon-breakers: a spire, a broad oak, a birch stand. */
@@ -403,6 +424,12 @@ const DUSK_C: [number, number, number] = [1, 1, 1];
  * surface is covered by the ground slab in front of it.
  */
 const BANK_SCALE = 0.7;
+/**
+ * Fraction of the slab the bank actually draws, measured down from the top of
+ * its crop. 0.355 puts the bank's lower edge at screen y=620, which is 53
+ * units under the walkable slab's own 96%-opaque line at its lowest phase.
+ */
+const BANK_CROP = 0.355;
 /** How far above the collision line the bank's own surface row sits. */
 const BANK_LIFT = 34;
 /** Peak-to-trough of the skyline rise, and how many tiles it takes to cycle. */
@@ -454,9 +481,36 @@ function solid(f: Frame, u: number, v: number): Frame {
   return { tex: f.tex, u0: uu, v0: vv, u1: uu, v1: vv, w: 1, h: 1, px: 0.5, py: 0.5 };
 }
 
-/** Same frame, pivot moved to the sprite's footprint so it plants and sways. */
-function planted(f: Frame, bot: number): Frame {
-  return { ...f, py: bot };
+/**
+ * The frame a prop is actually drawn from: cropped to its ink box, with the
+ * pivot moved to the sprite's footprint so it plants and sways.
+ *
+ * The pivot is expressed in the *cropped* frame's space but placed where it
+ * would have been in the full one — horizontally on the matte's centre line,
+ * vertically on `bot`. That is what makes the crop free of consequences: the
+ * anchor the layout code positions, the axis a mirrored sprite reflects about
+ * and the point a swaying sprite rotates around are all unchanged, so the
+ * caller's `x`, `y` and scale arithmetic (which is written against the full
+ * frame, `raw.h * span`) keeps working untouched.
+ */
+function trimmed(f: Frame, spec: Spec): Frame {
+  const u0 = spec.u0 ?? 0;
+  const u1 = spec.u1 ?? 1;
+  const v0 = spec.v0 ?? 0;
+  const v1 = spec.v1 ?? 1;
+  const du = f.u1 - f.u0;
+  const dv = f.v1 - f.v0;
+  return {
+    tex: f.tex,
+    u0: f.u0 + du * u0,
+    v0: f.v0 + dv * v0,
+    u1: f.u0 + du * u1,
+    v1: f.v0 + dv * v1,
+    w: f.w * (u1 - u0),
+    h: f.h * (v1 - v0),
+    px: (0.5 - u0) / (u1 - u0),
+    py: (spec.bot - v0) / (v1 - v0),
+  };
 }
 
 /**
@@ -519,23 +573,6 @@ interface Prop {
   phase: number;
 }
 
-/** One slice of a drifting cirrus sheet. Kept in sky-`v` space so the sheet
- *  can be re-projected every frame against a viewport-sized sky. */
-interface DriftBand {
-  f: Frame;
-  v0: number;
-  v1: number;
-  a: number;
-}
-
-interface Drift {
-  bands: DriftBand[];
-  wide: number;
-  amp: number;
-  rate: number;
-  phase: number;
-}
-
 /** A piece of the over-frame band: anchored by its flat TOP edge (py = 0). */
 interface Hang {
   f: Frame;
@@ -561,7 +598,6 @@ export class Parallax {
   private skirt: Frame | null = null;
   private skirtY = 0;
   private skirtSy = 1;
-  private drifts: Drift[] = [];
 
   private mtn: FarLayer | null = null;
   private hill: FarLayer | null = null;
@@ -585,6 +621,7 @@ export class Parallax {
   private tallMargin = 0;
 
   private groundF: Frame | null = null;
+  private bankF: Frame | null = null;
   private groundY = 0;
   private groundScale = 1;
   private groundTileW = 1;
@@ -661,16 +698,6 @@ export class Parallax {
     this.skirtSy = 96 / this.skirt.h;
     this.skirtY = SKY_BOTTOM - 6 + 48;
 
-    // Drifting cirrus: the same sky redrawn over its own natural v range, so
-    // the gradient matches exactly and only the wisps move. Each sheet is
-    // sliced and faded to nothing at both ends — a hard-edged sheet drawn at
-    // even 0.2 alpha rules a visible line right across an otherwise smooth sky.
-    // Both sheets live inside the visible range: a sheet whose v band starts
-    // above SKY_V0 is projected to a negative screen y and simply never shows.
-    this.drifts.length = 0;
-    this.pushDrift(sky, 0.7, 0.86, 1.22, 88, 0.01, 0.05, 0);
-    this.pushDrift(sky, 0.81, 0.97, 1.17, 58, 0.007, 0.035, 2.1);
-
     // --- far mountains ----------------------------------------------------
     const mtn = sub(a.get('mountains_far')!, MTN_U0, MTN_U1, 0, 1);
     const mtnH = mtn.h * MTN_SCALE;
@@ -685,9 +712,19 @@ export class Parallax {
     // tint is a hue now as well as a level: mauve-violet at the crest so the
     // peaks belong to the sky they stand in, warm and low-alpha at the base so
     // they dissolve into the amber rather than into white.
+    // The band is the strip of the painting that is BOTH painted and visible.
+    //
+    // Its top is where the first peak appears (measured: nothing above alpha 48
+    // exists over v 0.352, and the old 0.34 was rasterising two dozen rows of
+    // empty matte across the full width of the screen). Its bottom is not the
+    // base of the range, it is the line below which the hills in front are
+    // solid — the mountains' lower slopes are painted, and permanently behind
+    // something. 0.6583 puts it at screen y=550, inside the band where the
+    // hills measure 97.6% opaque and above the grass bank's own surface, so
+    // nothing that was ever visible has been cropped away.
     this.mtn = this.buildLayer(
       mtn, F_MTN, MTN_SCALE, mtnCy,
-      0.34, 0.715,
+      0.352, 0.6583,
       0.8, 0.22,
       1.72, 1.46, 1.7,
       1.95, 1.7, 1.24,
@@ -704,9 +741,12 @@ export class Parallax {
     // read as sky. The old near-neutral 1.78/2.32 ramp put it at luma 140 in
     // the same hue family as everything else — depth by fog, with no colour to
     // the fog.
+    // Same rule as the mountains: painted-and-visible only. The bottom lands at
+    // screen y=565, fifteen units below the lowest the grass bank's surface can
+    // ride, so the ridge still runs under the grass rather than stopping at it.
     this.hill = this.buildLayer(
       hilF, F_HIL, HIL_SCALE, hilCy,
-      0.355, 0.632,
+      0.362, 0.5926,
       0.92, 0.3,
       1.92, 1.84, 2.12,
       2.7, 2.45, 1.95,
@@ -814,8 +854,19 @@ export class Parallax {
     // The bank: the same registration arithmetic against a surface line lifted
     // BANK_LIFT above the collision one, at its own smaller scale — which also
     // gives it a different tile pitch, so the two grass edges never beat.
+    //
+    // Only its top matters. The bank exists to be the ninth scroll rate and to
+    // give the skyline an undulating edge; everything more than a few dozen
+    // units under its own surface row is behind the walkable slab, which is
+    // 96% opaque from y=553 down. So it is cropped to the top third of the
+    // slab — the fringe of blades, the surface, and enough mat below it to
+    // stay covered on every phase of the rise — instead of drawing a
+    // full-height second copy of the ground that reaches off the bottom of the
+    // frame. That is a quarter of a screen of fill per frame for nothing.
     const bh = this.groundF.h * BANK_SCALE;
-    this.bankY = GROUND_Y - BANK_LIFT + (0.5 - surf) * bh;
+    const bankTop = GROUND_Y - BANK_LIFT - surf * bh;
+    this.bankF = sub(this.groundF, 0, 1, 0, BANK_CROP);
+    this.bankY = bankTop + bh * BANK_CROP * 0.5;
     this.bankTileW = this.groundF.w * BANK_SCALE;
     this.bankRise.length = 0;
     for (let k = 0; k < BANK_STEPS; k++) {
@@ -881,6 +932,14 @@ export class Parallax {
       // Pitched well inside a tile width so neighbours always overlap: the
       // band has to read as a continuous ceiling of leaf, and a gap in it is a
       // hole straight back to the empty sky this layer exists to cover.
+      //
+      // Widening the pitch was tried as a fill saving — the pieces draw at 0.92
+      // alpha, so a second one over the first only moves coverage from 92% to
+      // 99% and looked on paper like a quarter of a screen of overdraw bought
+      // for nothing. It is not nothing. At a 0.55-0.72 pitch the ceiling
+      // measurably thinned across the top of the frame and the hem climbed:
+      // 0.26x of fill saved and the band stopped reading as a canopy. The
+      // overlap is the density. Left alone.
       for (let i = 0; i < 13; i++) {
         const h = rng.range(186, 248);
         w = h * aspect;
@@ -930,32 +989,6 @@ export class Parallax {
       this.vineSpan = x + rng.range(700, 1400);
       this.vineMargin = hangMargin(this.vines);
     }
-  }
-
-  private pushDrift(
-    sky: Frame,
-    v0: number,
-    v1: number,
-    wide: number,
-    amp: number,
-    rate: number,
-    peak: number,
-    phase: number,
-  ): void {
-    const n = 7;
-    const bands: DriftBand[] = [];
-    for (let k = 0; k < n; k++) {
-      const va = v0 + ((v1 - v0) * k) / n;
-      const vb = v0 + ((v1 - v0) * (k + 1)) / n;
-      bands.push({
-        f: sub(sky, SKY_U0, 1, va, vb),
-        v0: va,
-        v1: vb,
-        // Sine taper: zero at both ends, so the sheet has no edge to see.
-        a: peak * Math.sin((Math.PI * (k + 0.5)) / n),
-      });
-    }
-    this.drifts.push({ bands, wide, amp, rate, phase });
   }
 
   /**
@@ -1043,14 +1076,25 @@ export class Parallax {
    * and the hills give them something to be in front of.
    */
   private buildClouds(ctx: Ctx, rng: Rng): number {
-    const ids = ['cloud_a', 'cloud_b'].filter((id) => ctx.assets.has(id));
-    if (!ids.length) return 1;
+    // Same ink-box crop as the props, and the one that pays best in the whole
+    // scene: `cloud_b` is a thin streak lying across the middle of a 900x600
+    // matte and occupies 18% of it. `bot` is 0.5 for a cloud — it hangs from
+    // its own centre, not off a footprint — so the pivot stays put and the
+    // scale stays keyed to the untrimmed height.
+    const CLOUDS: Spec[] = [
+      { id: 'cloud_a', bot: 0.5, span: 1, u0: 0.016, u1: 0.99, v0: 0.148, v1: 0.815 },
+      { id: 'cloud_b', bot: 0.5, span: 1, u0: 0.008, u1: 0.992, v0: 0.38, v1: 0.585 },
+    ];
+    const specs = CLOUDS.filter((c) => ctx.assets.has(c.id));
+    if (!specs.length) return 1;
     let x = 0;
     for (let i = 0; i < 17; i++) {
       x += rng.range(390, 1080);
-      const f = ctx.assets.get(ids[rng.int(0, ids.length)])!;
+      const spec = specs[rng.int(0, specs.length)];
+      const raw = ctx.assets.get(spec.id)!;
+      const f = trimmed(raw, spec);
       const h = rng.range(96, 258);
-      const s = h / f.h;
+      const s = h / raw.h;
       // Hotter the lower it sits: these are lit from below the horizon.
       const t = clamp((rng.range(296, 474) - 296) / 178, 0, 1);
       const k = lerp(1.22, 0.86, t);
@@ -1108,7 +1152,7 @@ export class Parallax {
       const k = lerp(1 + grade, 1 - grade, hn);
       const warm = rng.range(0.9, 1.12);
       out.push({
-        f: planted(raw, spec.bot),
+        f: trimmed(raw, spec),
         x,
         y: lerp(yMin, yMax, hn) + rng.range(-5, 5),
         sx: rng.next() > 0.5 ? s : -s,
@@ -1208,33 +1252,19 @@ export class Parallax {
     const skySy = skySpanH / sk.h;
     const skyCy = skyTop + skySpanH * 0.5;
     const s1 = SKY_C;
-    const s2 = SKY_C2;
+    // ONE quad for the sky, plus the sliver that fills in below the horizon.
+    //
+    // This used to be eighteen. The gradient was drawn three times — the base
+    // plus two copies offset by a gradient step at 5.5% alpha, to dither the
+    // 8-bit staircase — and a drifting cirrus sheet was two more copies of the
+    // same painting, each sliced into seven alpha-tapered bands, at 3.5-5%.
+    // Measured, that came to 2.42 screens of fill per frame, more than a third
+    // of the whole frame's cost, to add a wisp nobody could point at and a
+    // dither that belongs in the shader. The banding is handled per fragment
+    // now (see `gl.ts`), which is free; the sky's moving interest is the lit
+    // cloud bank drawn later, which is real geometry a tenth of the size.
     r.draw(sk, cx, skyCy, skySx, skySy, 0, s1[0], s1[1], s1[2], 1);
-    // Two half-strength copies, offset by about half a gradient step. The
-    // source is an 8-bit ramp and stretching it over a phone's worth of sky
-    // made every step visible as a stripe; averaging three taps dithers the
-    // staircase away for two sprites and no extra draw call.
-    const tap = skySpanH * 0.011;
-    r.draw(sk, cx, skyCy - tap, skySx, skySy, 0, s1[0], s1[1], s1[2], 0.055);
-    r.draw(sk, cx, skyCy + tap, skySx, skySy, 0, s2[0], s2[1], s2[2], 0.055);
     r.draw(this.skirt!, cx, this.skirtY, spanW / this.skirt!.w, this.skirtSy, 0, s1[0], s1[1], s1[2], 1);
-
-    const skyScale = skySpanH / (1 - SKY_V0);
-    for (let i = 0; i < this.drifts.length; i++) {
-      const d = this.drifts[i];
-      const x = cx + (still ? 0 : Math.sin(t * d.rate + d.phase) * d.amp);
-      for (let k = 0; k < d.bands.length; k++) {
-        const b = d.bands[k];
-        const y0 = skyTop + (b.v0 - SKY_V0) * skyScale;
-        const y1 = skyTop + (b.v1 - SKY_V0) * skyScale;
-        // Tinted like the sky it lies on. Drawn untinted, as it used to be,
-        // each sheet pulled the whole sky back toward the raw painting: two
-        // sheets at 0.22 and 0.16 alpha cost about 7% of every sky pixel, and
-        // 7% off a highlight is the difference between a highlight and a
-        // mid-tone.
-        r.draw(b.f, x, (y0 + y1) * 0.5, (spanW * d.wide) / b.f.w, (y1 - y0) / b.f.h, 0, s2[0], s2[1] * 0.99, s2[2], b.a);
-      }
-    }
 
     // 2 -------------------------------------------------- far mountains
     this.drawLayer(r, this.mtn!, distance);
@@ -1267,17 +1297,20 @@ export class Parallax {
     const bw = this.bankTileW;
     const boff = distance * F_BANK;
     const nRise = this.bankRise.length;
-    const b0 = Math.floor((boff + vl) / bw) - 1;
-    const b1 = Math.ceil((boff + vr) / bw) + 1;
+    // Tile index i covers exactly [i*w - off, (i+1)*w - off), so floor/ceil of
+    // the visible edges is the complete cover; the extra tile that used to be
+    // added on each side was always entirely off screen.
+    const b0 = Math.floor((boff + vl) / bw);
+    const b1 = Math.ceil((boff + vr) / bw);
     for (let idx = b0; idx <= b1; idx++) {
       const x = idx * bw - boff + bw * 0.5;
       const k = (((idx % nRise) + nRise) % nRise) | 0;
       const flip = (((idx % 2) + 2) % 2) === 0 ? BANK_SCALE : -BANK_SCALE;
-      r.draw(g, x, this.bankY + this.bankRise[k], flip, BANK_SCALE, 0, BANK_C[0], BANK_C[1], BANK_C[2], 1);
+      r.draw(this.bankF!, x, this.bankY + this.bankRise[k], flip, BANK_SCALE, 0, BANK_C[0], BANK_C[1], BANK_C[2], 1);
     }
     const gw = this.groundTileW;
-    const g0 = Math.floor((distance + vl) / gw) - 1;
-    const g1 = Math.ceil((distance + vr) / gw) + 1;
+    const g0 = Math.floor((distance + vl) / gw);
+    const g1 = Math.ceil((distance + vr) / gw);
     const gRise = GROUND_RISE / BANK_RISE;
     for (let idx = g0; idx <= g1; idx++) {
       const x = idx * gw - distance + gw * 0.5;
@@ -1341,8 +1374,8 @@ export class Parallax {
     // Indexed off the *live* left edge, not off zero. On anything wider than
     // 16:9 `viewLeft` is negative, and a loop that started at the tile covering
     // x=0 simply left the strip to its left unpainted.
-    const i0 = Math.floor((off + vl) / l.tileW) - 1;
-    const i1 = Math.ceil((off + vr) / l.tileW) + 1;
+    const i0 = Math.floor((off + vl) / l.tileW);
+    const i1 = Math.ceil((off + vr) / l.tileW);
     for (let idx = i0; idx <= i1; idx++) {
       const x = idx * l.tileW - off + l.tileW * 0.5;
       // Alternate tiles mirror, which both doubles the repeat period and makes
