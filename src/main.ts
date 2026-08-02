@@ -239,6 +239,15 @@ async function boot(): Promise<void> {
     return on ? "RAW: art only" : "styled";
   };
 
+  // Build stamp. Vite hashes the bundle filename, so a normal refresh can
+  // quietly serve a stale one — which has repeatedly made a fixed bug look
+  // unfixed.  in the console says exactly which build is running.
+  (window as any).__build = () => {
+    const stamp = __BUILD_STAMP__;
+    console.log('%c' + stamp, 'font:600 13px ui-monospace;color:#9ff0c8');
+    return stamp;
+  };
+
   // Expose a handle for the automated capture harness.
   (window as any).__game = {
     ctx,
