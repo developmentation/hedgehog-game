@@ -183,8 +183,21 @@ const SKY_BOTTOM = 474;
  * over most of the range. This one keeps violet violet at the top and lets only
  * the last few rows above the horizon clip, where clipping reads as the sun.
  */
-const SKY_C: [number, number, number] = [1.204, 1.109, 1.156];
-const SKY_C2: [number, number, number] = [1.19, 1.099, 1.156];
+/**
+ * Layer tints are multipliers on the painted art, and are capped at 1.0.
+ *
+ * The generated assets contain no near-white pixels — measured 0.00% above
+ * luma 235 in every one, with a p99 of at most 206. Any multiplier above 1.0
+ * therefore manufactures exposure the artwork does not have: the canopy was
+ * running at 3.24x, which drove art peaking at 192 straight into clipping and
+ * blew the frame out. Values below 1.0 are fine and are kept — darkening and
+ * cooling a distant layer is atmospheric perspective and cannot clip.
+ *
+ * Do not raise these above 1.0 to hit a brightness target. Light the scene by
+ * choosing what to draw, not by over-driving what is already painted.
+ */
+const SKY_C: [number, number, number] = [1, 1, 1];
+const SKY_C2: [number, number, number] = [1, 1, 1];
 
 /** Screen line the far layers bottom out on — under the ground, so no seam. */
 const FAR_BASE = 596;
@@ -330,9 +343,9 @@ const VINE_MIN_H = 330;
  * horizon on its lit edges and the sky in its depths, and the texture already
  * has both if the multiplier does not flatten them.
  */
-const CANOPY_C: [number, number, number] = [1.762, 1.626, 1.673];
+const CANOPY_C: [number, number, number] = [1, 1, 1];
 const CANOPY_A = 0.92;
-const VINE_C: [number, number, number] = [1.238, 1.177, 1.211];
+const VINE_C: [number, number, number] = [1, 1, 1];
 const VINE_A = 0.92;
 
 /** Radius around the hedgehog inside which foreground foliage thins to a wisp. */
@@ -352,7 +365,7 @@ const HERO_CLEAR_A = 0.26;
  */
 const HAZE_U = 740 / 1400;
 const HAZE_V = 356 / 933; // brightest lit crown: hot gold, luma 220
-const HAZE_C: [number, number, number] = [1.143, 1.014, 0.871];
+const HAZE_C: [number, number, number] = [1, 1, 0.871];
 const SCRIM_U = 700.5 / 1400;
 const SCRIM_V = 513.5 / 933; // deep forest shadow: dark teal
 
@@ -377,7 +390,7 @@ const RAKE_V = 0.4748;
 const RAKE_C: [number, number, number] = [1, 0.88, 0.5];
 const DUSK_U = 0.5943;
 const DUSK_V = 0.4898;
-const DUSK_C: [number, number, number] = [1, 1, 1.136];
+const DUSK_C: [number, number, number] = [1, 1, 1];
 
 /**
  * The grass bank: the same slab, drawn a second time behind the walkable one.
@@ -409,7 +422,7 @@ const BANK_STEPS = 7;
  */
 const GROUND_RISE = 7;
 const GROUND_PHASE = 3;
-const BANK_C: [number, number, number] = [1.782, 1.629, 1.323];
+const BANK_C: [number, number, number] = [1, 1, 1];
 
 // ------------------------------------------------------------------- helpers
 
@@ -714,7 +727,8 @@ export class Parallax {
     this.hazeF = solid(hil, HAZE_U, HAZE_V);
     this.hazeC = HAZE_C;
     this.buildWash(this.haze, 296, 576, 32, (u) =>
-      0.96 * smoothstep(clamp((u - 0.1) / 0.55, 0, 1)),
+      // 0.96 was not haze, it was a bright flat wash over the painting.
+      0.2 * smoothstep(clamp((u - 0.1) / 0.55, 0, 1)),
     );
     this.scrimF = solid(hil, SCRIM_U, SCRIM_V);
     this.buildWash(
@@ -820,7 +834,8 @@ export class Parallax {
     this.buildWash(this.rake, 552, 1010, 34, (u) => {
       const rise = smoothstep(clamp(u / 0.075, 0, 1));
       const fall = 1 - smoothstep(clamp((u - 0.09) / 0.32, 0, 1));
-      return 0.74 * rise * fall;
+      // 0.74 blew out the whole band just above the grass line.
+      return 0.16 * rise * fall;
     });
     this.duskF = solid(grd, DUSK_U, DUSK_V);
     // ...and everything below that goes into the ground's own shadow. Reaches
