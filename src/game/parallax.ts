@@ -183,8 +183,8 @@ const SKY_BOTTOM = 474;
  * over most of the range. This one keeps violet violet at the top and lets only
  * the last few rows above the horizon clip, where clipping reads as the sun.
  */
-const SKY_C: [number, number, number] = [0.501, 0.481, 0.491];
-const SKY_C2: [number, number, number] = [0.498, 0.48, 0.491];
+const SKY_C: [number, number, number] = [1.204, 1.109, 1.156];
+const SKY_C2: [number, number, number] = [1.19, 1.099, 1.156];
 
 /** Screen line the far layers bottom out on — under the ground, so no seam. */
 const FAR_BASE = 596;
@@ -330,9 +330,9 @@ const VINE_MIN_H = 330;
  * horizon on its lit edges and the sky in its depths, and the texture already
  * has both if the multiplier does not flatten them.
  */
-const CANOPY_C: [number, number, number] = [0.616, 0.588, 0.598];
+const CANOPY_C: [number, number, number] = [1.762, 1.626, 1.673];
 const CANOPY_A = 0.92;
-const VINE_C: [number, number, number] = [0.508, 0.496, 0.502];
+const VINE_C: [number, number, number] = [1.238, 1.177, 1.211];
 const VINE_A = 0.92;
 
 /** Radius around the hedgehog inside which foreground foliage thins to a wisp. */
@@ -352,7 +352,7 @@ const HERO_CLEAR_A = 0.26;
  */
 const HAZE_U = 740 / 1400;
 const HAZE_V = 356 / 933; // brightest lit crown: hot gold, luma 220
-const HAZE_C: [number, number, number] = [0.488, 0.462, 0.432];
+const HAZE_C: [number, number, number] = [1.143, 1.014, 0.871];
 const SCRIM_U = 700.5 / 1400;
 const SCRIM_V = 513.5 / 933; // deep forest shadow: dark teal
 
@@ -374,10 +374,10 @@ const SCRIM_V = 513.5 / 933; // deep forest shadow: dark teal
  */
 const RAKE_U = 0.8771;
 const RAKE_V = 0.4748;
-const RAKE_C: [number, number, number] = [0.459, 0.404, 0.229];
+const RAKE_C: [number, number, number] = [1, 0.88, 0.5];
 const DUSK_U = 0.5943;
 const DUSK_V = 0.4898;
-const DUSK_C: [number, number, number] = [0.459, 0.459, 0.487];
+const DUSK_C: [number, number, number] = [1, 1, 1.136];
 
 /**
  * The grass bank: the same slab, drawn a second time behind the walkable one.
@@ -409,7 +409,7 @@ const BANK_STEPS = 7;
  */
 const GROUND_RISE = 7;
 const GROUND_PHASE = 3;
-const BANK_C: [number, number, number] = [0.62, 0.588, 0.525];
+const BANK_C: [number, number, number] = [1.782, 1.629, 1.323];
 
 // ------------------------------------------------------------------- helpers
 

@@ -2083,7 +2083,12 @@ export class Player {
       this.state === 'dash' && this.stateT < T.dashTime * CHARGE_FRAC;
     const chargeK = charging ? smoothstep(clamp(this.stateT / (T.dashTime * CHARGE_FRAC), 0, 1)) : 0;
 
-    if (charging) {
+    // Rotational smear is a property of ROLLING. Applied to the walk pose it
+    // drew four rotated copies of the walking hedgehog orbiting the walking
+    // hedgehog, so the character was visibly walking and rolling at the same
+    // time. It is also anchored to the body angle now, so a smear copy can
+    // never sit hundreds of degrees away from the sprite it is smearing.
+    if (charging && curledPose) {
       // Heat builds in the core, and a ring winds inwards as anticipation.
       const glow = ctx.atlas.get('fx/glow');
       const gs = (120 + chargeK * 90) / glow.w;
@@ -2214,7 +2219,7 @@ export class Player {
       // instead and the echoes above already carry it.
       if (charging) {
         const step = (0.22 + chargeK * 0.5) * soft;
-        this.drawBlur(r, sf, this.x, cy, uni * sfAdj, wrot, step, (0.13 + chargeK * 0.1) * smear);
+        this.drawBlur(r, sf, this.x, cy, uni * sfAdj, rot, step, (0.13 + chargeK * 0.1) * smear);
       } else if (this.state === 'dash') {
         // In flight the body is already stretched along travel, so the smear
         // is linear rather than rotational: copies dropped straight back down
@@ -2240,8 +2245,8 @@ export class Player {
         }
       } else {
         const step = clamp(Math.abs(this.spinRate) * 0.032, 0, 0.4) * soft;
-        if (step > 0.02) {
-          this.drawBlur(r, sf, this.x, cy, uni * sfAdj, wrot, step, 0.2 * smear);
+        if (curledPose && step > 0.02) {
+          this.drawBlur(r, sf, this.x, cy, uni * sfAdj, rot, step, 0.2 * smear);
         }
       }
     }
