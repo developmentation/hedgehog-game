@@ -106,23 +106,65 @@ export function plate(
   const px = ctx.atlas.get('ui/pixel');
   const co = ctx.atlas.get('ui/corner');
   const rr = Math.min(rad, W * 0.5, H * 0.5);
-  const sc = rr / co.w;
-  const x0 = x0e + rr / 2;
-  const x1 = x1e - rr / 2;
-  const y0 = y0e + rr / 2;
-  const y1 = y1e - rr / 2;
-  r.draw(co, x0, y0, sc, sc, 0, c[0], c[1], c[2], a);
-  r.draw(co, x1, y0, sc, sc, HALF_PI, c[0], c[1], c[2], a);
-  r.draw(co, x1, y1, sc, sc, Math.PI, c[0], c[1], c[2], a);
-  r.draw(co, x0, y1, sc, sc, -HALF_PI, c[0], c[1], c[2], a);
 
-  const midW = W - rr * 2;
+  // Snap the INTERNAL joins to the pixel grid, and only overlap when opaque.
+  //
+  // A plate is four quarter-discs plus stretched bars. The outer edges were
+  // already snapped, but the joins between the pieces were not, so every seam
+  // landed on a fraction of a pixel and the corner sprites' own anti-aliased
+  // edges let a hairline of background through — a line across the score strip,
+  // and on a circle, where the bars vanish and the four quadrants meet at the
+  // centre, the HINT button broke visibly into quarters.
+  //
+  // Overlapping the pieces fixes an OPAQUE plate, since drawing the same solid
+  // colour twice is indistinguishable from drawing it once. It makes a
+  // TRANSLUCENT one worse: two passes of alpha 0.14 leave a brighter cross
+  // exactly where they overlap, which is the seam again in the other direction.
+  // So the joins are snapped for everything, and the overlap is added only when
+  // the colour is solid enough that double-covering cannot show.
+  const xa = snapX(r, x0e + rr);
+  const xb = snapX(r, x1e - rr);
+  const ya = snapY(r, y0e + rr);
+  const yb = snapY(r, y1e - rr);
+  const eps = a >= 0.995 ? 1 / Math.max(r.scale, 0.0001) : 0;
+
+  // Each corner is sized from its own snapped join, so a rounding difference on
+  // one side cannot shift the piece on the other.
+  const corner = (px0: number, px1: number, py0: number, py1: number, rot: number): void => {
+    const cw = px1 - px0;
+    const chh = py1 - py0;
+    if (cw <= 0 || chh <= 0) return;
+    r.draw(
+      co,
+      (px0 + px1) * 0.5,
+      (py0 + py1) * 0.5,
+      (cw + eps) / co.w,
+      (chh + eps) / co.h,
+      rot,
+      c[0],
+      c[1],
+      c[2],
+      a,
+    );
+  };
+  corner(x0e, xa, y0e, ya, 0);
+  corner(xb, x1e, y0e, ya, HALF_PI);
+  corner(xb, x1e, yb, y1e, Math.PI);
+  corner(x0e, xa, yb, y1e, -HALF_PI);
+
+  // The cross that fills everything the corners do not.
+  const midW = xb - xa;
   if (midW > 0.5) {
-    r.draw(px, mx, y0, midW / px.w, rr / px.h, 0, c[0], c[1], c[2], a);
-    r.draw(px, mx, y1, midW / px.w, rr / px.h, 0, c[0], c[1], c[2], a);
+    const bw = (midW + eps * 2) / px.w;
+    const topH = ya - y0e;
+    const botH = y1e - yb;
+    if (topH > 0.5) r.draw(px, mx, (y0e + ya) * 0.5, bw, (topH + eps) / px.h, 0, c[0], c[1], c[2], a);
+    if (botH > 0.5) r.draw(px, mx, (yb + y1e) * 0.5, bw, (botH + eps) / px.h, 0, c[0], c[1], c[2], a);
   }
-  const midH = H - rr * 2;
-  if (midH > 0.5) r.draw(px, mx, my, W / px.w, midH / px.h, 0, c[0], c[1], c[2], a);
+  const midH = yb - ya;
+  if (midH > 0.5) {
+    r.draw(px, mx, (ya + yb) * 0.5, W / px.w, (midH + eps * 2) / px.h, 0, c[0], c[1], c[2], a);
+  }
 }
 
 /** The outline that registers exactly with `plate`. Stroke is 1/8 of the radius. */
