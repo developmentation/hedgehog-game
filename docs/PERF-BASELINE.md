@@ -94,3 +94,61 @@ That is an art decision, not an optimization.
 - SwiftShader (`--enable-unsafe-swiftshader`) is a usable stand-in for
   fill-rate work — it is a pure software rasteriser — but it saturates near the
   60 Hz cap once overdraw drops, so fps claims here come from headed runs.
+
+---
+
+# After the optimization pass
+
+Combined tree at commit `5da7861` + asset cleanup. Same method, same machine.
+
+| metric | baseline | after | change |
+|---|---|---|---|
+| **overdraw** | 6.83x | **4.60x** | −33% |
+| **GL draw calls** | 17 | **2** | −88% |
+| offscreen quads reaching GL | 17.9/frame | **0** | eliminated |
+| update (CPU) | 0.12 ms | **0.09 ms** | |
+| render submit (CPU) | 0.55 ms | **0.37 ms** | −33% |
+| sprites submitted | 302 | 267 | |
+| painted textures loaded | 33 | 32 | dropped orphaned `hog_ball_blur` |
+| JS heap | 7 MB | 7 MB | |
+
+## Overdraw by texture
+
+| texture | before | after |
+|---|---|---|
+| sky_dusk | 2.42x | **0.79x** |
+| shared painted atlas | 1.87x | 1.50x |
+| procedural atlas | 0.88x | 0.99x |
+| ground_slab | 0.64x | 0.52x |
+| mountains_far | 0.59x | 0.48x |
+| hills_mid | 0.38x | 0.32x |
+
+## What did it
+
+- Sky collapsed 18 draws -> 2. Anti-banding is now interleaved-gradient noise in
+  the fragment shader (4 ALU ops) instead of two full-screen alpha copies, and
+  the 14 cirrus band-slices are gone.
+- Exact frustum culling in `Renderer.draw`, against the world rect the
+  projection actually maps onto the viewport.
+- Batching now spans textures (8 sampler slots, binary-split selector) and
+  additive is done per fragment, so `setBlend` is no longer a state change.
+  Those two things were what split every batch.
+- Every prop/tree/cloud trimmed to its measured ink box, pivots re-registered so
+  position, scale and mirroring are unchanged.
+
+## Target not met, and why
+
+Overdraw target was <= 2.5x; the result is 4.60x. The backdrop alone is 2.10x
+after cropping (sky 0.66 + skirt 0.13 + mountains 0.48 + hills 0.32 + bank 0.20
++ ground 0.31). An opaque backdrop cannot cost less than 1.0x, and the excess is
+what nine distinct scroll rates cost when the layers in front have silhouettes
+you see between. Reaching 2.5x means fewer parallax planes, which is a look
+decision rather than an optimization.
+
+Largest remaining fill:
+1. over-frame canopy, 0.36x — pieces draw at 0.92 alpha, so the overlap IS the
+   density; widening the pitch saved 0.10x and visibly thinned the leaf ceiling.
+2. procedural atlas, 0.99x — glyphs, HUD and particles, not touched by this pass.
+
+The game remains GPU-fill bound, not CPU bound: 0.09 ms update + 0.37 ms render
+against a ~20 ms frame.

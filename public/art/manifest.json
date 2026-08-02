@@ -228,14 +228,6 @@
       "h": 460,
       "coverage": 0.354
     },
-    "hog_ball_blur": {
-      "id": "hog_ball_blur",
-      "group": "hero",
-      "w": 420,
-      "h": 420,
-      "opaque": false,
-      "coverage": 0.443
-    },
     "canopy_overhang": {
       "id": "canopy_overhang",
       "group": "canopy",

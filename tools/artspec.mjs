@@ -329,17 +329,7 @@ export const ASSETS = [
     chroma: GREEN,
     maxDim: 460,
   },
-      {
-    id: 'hog_ball_blur',
-    group: 'hero',
-    hero: true,
-    subject:
-      'A spiky hedgehog curled into a ball and spinning fast, seen from the side. THE SILHOUETTE IS THE MOST IMPORTANT THING: sharp individual quill spikes clearly project outward and BREAK the circular outline all the way around, like a spiked wheel or a sawblade, so the shape is unmistakably a spiky hedgehog and never a smooth disc. Roughly 20 distinct pointed spikes around the rim, each catching bright warm amber light at its tip against a darker indigo body. Inside the rim, the quills blur into soft concentric bands to show rotation, but the spikes themselves stay crisp and hard-edged. A clean dark contour outlines the whole spiky shape. The centre is a soft pale cream blur. Bright, high contrast, bold and readable as a small game sprite.',
-    size: '1024x1024',
-    chroma: GREEN,
-    maxDim: 420,
-  },
-  {
+        {
     id: 'hog_cheer',
     group: 'hero',
     hero: true,
