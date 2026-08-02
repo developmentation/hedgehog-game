@@ -49,6 +49,13 @@ export interface Profile {
      * no life, no points, no combo and can never trigger a setback.
      */
     easyMode: boolean;
+    /**
+     * Fraction of device resolution the world pass rasterises at, or
+     * undefined to let the adaptive scaler own it. Persisted so a device that
+     * has already been measured does not have to re-discover its ceiling on
+     * every load.
+     */
+    renderScale?: number;
   };
   /** Per-word mastery, keyed by the word itself. */
   wordStats: Record<string, WordStat>;
@@ -163,6 +170,14 @@ export class SaveStore {
       ? Math.min(SPEED_MAX, Math.max(SPEED_MIN, s.speed))
       : 1;
     s.easyMode = !!s.easyMode;
+    // A stored render scale is data from outside this build. Out of range or
+    // NaN means "let the scaler decide" rather than a broken frame buffer.
+    if (s.renderScale !== undefined) {
+      s.renderScale =
+        Number.isFinite(s.renderScale) && s.renderScale >= 0.4 && s.renderScale <= 1
+          ? s.renderScale
+          : undefined;
+    }
     return merged;
   }
 
