@@ -339,6 +339,151 @@ export const ASSETS = [
     chroma: GREEN,
     maxDim: 460,
   },
+  // ------------------------------------------------------- WINTER theme
+  {
+    id: "winter_sky",
+    group: "sky",
+    subject:
+      "An empty winter dusk sky. Smooth vertical gradient from deep slate-blue at the top through pale lilac to a cold rose-and-cream glow at the horizon. Faint high ice-cloud streaks. Nothing else: no ground, no hills, no trees, no sun disc.",
+    size: "1536x1024",
+    opaque: true,
+  },
+  {
+    id: "winter_mountains",
+    group: "far",
+    subject:
+      "A long horizontal range of distant snow-capped mountain peaks in flat atmospheric silhouette, pale ice-blue and very low contrast, seen from far away as a background layer. Spans the full width with varied peak heights and a flat bottom edge.",
+    size: "1536x1024",
+    chroma: MAGENTA,
+    maxDim: 1400,
+  },
+  {
+    id: "winter_hills",
+    group: "mid",
+    subject:
+      "A long horizontal band of rolling snow-covered forested hills in mid-distance silhouette, cold blue-white with dark evergreen shapes, a soft cold rim of light along the top ridge. Spans the full width, flat bottom edge.",
+    size: "1536x1024",
+    chroma: MAGENTA,
+    maxDim: 1400,
+  },
+  {
+    id: "winter_ground",
+    group: "ground",
+    subject:
+      "A long horizontal slab of snow-covered frozen earth seen from the side, like a cross-section for a platformer. Top surface is deep crisp snow with a soft blue-shadowed lip and small drifts. Below, frozen dark soil with embedded stones and ice veins. Spans the full width, flat left, right and bottom edges.",
+    size: "1536x1024",
+    chroma: MAGENTA,
+    maxDim: 1400,
+  },
+  {
+    id: "winter_tree_pine",
+    group: "prop",
+    subject:
+      "A single tall snow-laden conifer pine tree, dark green needled branches heavy with settled snow, narrow pointed top. Full tree upright, trunk base at the bottom of frame.",
+    size: "1024x1536",
+    chroma: MAGENTA,
+    maxDim: 1100,
+  },
+  {
+    id: "winter_tree_bare",
+    group: "prop",
+    subject:
+      "A single bare deciduous tree in winter, no leaves, intricate dark branching silhouette with a rime of frost along the upper branches. Full tree upright, trunk base at the bottom of frame.",
+    size: "1024x1536",
+    chroma: MAGENTA,
+    maxDim: 1100,
+  },
+  {
+    id: "winter_rock",
+    group: "prop",
+    subject:
+      "A single large weathered boulder capped with a thick pillow of snow, cold blue shadows in its crevices. Resting flat on its base at the bottom of frame.",
+    size: "1024x1024",
+    chroma: MAGENTA,
+    maxDim: 560,
+  },
+  {
+    id: "winter_grass",
+    group: "foreground",
+    subject:
+      "A clump of dry frost-covered winter grass and seed heads poking up through snow, pale straw and white. Bases gathered at the bottom of frame.",
+    size: "1024x1024",
+    chroma: MAGENTA,
+    maxDim: 460,
+  },
+
+  // ---------------------------------------------------- UNDERGROUND theme
+  {
+    id: "cave_backdrop",
+    group: "sky",
+    subject:
+      "The deep interior of a vast underground cavern as a flat background. Dark blue-black rock receding into gloom, faint cold blue light from far above catching distant stalactites, subtle mineral veins. Even and low contrast so foreground elements read against it. No floor, no characters.",
+    size: "1536x1024",
+    opaque: true,
+  },
+  {
+    id: "cave_far_wall",
+    group: "far",
+    subject:
+      "A long horizontal band of distant cavern wall in flat silhouette, dim blue-grey, with the ragged shapes of far stalagmites and stalactites along both edges. Spans the full width, flat bottom edge, very low contrast.",
+    size: "1536x1024",
+    chroma: MAGENTA,
+    maxDim: 1400,
+  },
+  {
+    id: "cave_mid_rocks",
+    group: "mid",
+    subject:
+      "A long horizontal band of mid-distance jagged underground rock formations in silhouette, cool grey-violet, with a faint teal glow along the upper edges as if lit by luminous moss. Spans the full width, flat bottom edge.",
+    size: "1536x1024",
+    chroma: MAGENTA,
+    maxDim: 1400,
+  },
+  {
+    id: "cave_ground",
+    group: "ground",
+    subject:
+      "A long horizontal slab of underground cavern floor seen from the side, like a cross-section for a platformer. Top surface is damp dark rock with scattered pebbles and patches of pale glowing moss. Below, layered strata, embedded crystals and deep shadow. Spans the full width, flat left, right and bottom edges.",
+    size: "1536x1024",
+    chroma: MAGENTA,
+    maxDim: 1400,
+  },
+  {
+    id: "cave_stalagmite",
+    group: "prop",
+    subject:
+      "A single tall pointed stalagmite rising from the ground, wet grey-violet rock with mineral banding and a faint glimmer near the tip. Standing upright, base at the bottom of frame.",
+    size: "1024x1536",
+    chroma: MAGENTA,
+    maxDim: 1100,
+  },
+  {
+    id: "cave_crystal_cluster",
+    group: "prop",
+    subject:
+      "A cluster of large glowing translucent teal crystals of varying heights growing from a rocky base, casting their own soft inner light. Bases at the bottom of frame.",
+    size: "1024x1024",
+    chroma: MAGENTA,
+    maxDim: 700,
+  },
+  {
+    id: "cave_mushroom_glow",
+    group: "prop",
+    subject:
+      "A cluster of tall bioluminescent underground mushrooms with domed caps glowing soft cyan from underneath, pale fleshy stalks. Bases at the bottom of frame.",
+    size: "1024x1024",
+    chroma: MAGENTA,
+    maxDim: 560,
+  },
+  {
+    id: "cave_moss",
+    group: "foreground",
+    subject:
+      "A clump of pale glowing underground moss and thin luminous fronds, soft teal light. Bases gathered at the bottom of frame.",
+    size: "1024x1024",
+    chroma: MAGENTA,
+    maxDim: 460,
+  },
 ];
 
 export const byId = (id) => ASSETS.find((a) => a.id === id);

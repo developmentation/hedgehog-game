@@ -101,6 +101,31 @@ async function boot(): Promise<void> {
   window.addEventListener('pointerdown', unlockAudio, { once: false });
   window.addEventListener('keydown', unlockAudio, { once: false });
 
+  // Render scale.
+  //
+  // The world pass can rasterise below device resolution and be upscaled on
+  // resolve (see gl.ts); the HUD always stays native. By default the adaptive
+  // controller owns it, so a machine that can hold the target frame rate at
+  // native never leaves native and the look at rest is unchanged.
+  //
+  // Two ways to take it off automatic:
+  //   ?rs=0.72        pin the scale for a capture or a comparison
+  //   ?rs=auto&fps=50 keep it adaptive but move the target
+  // A persisted preference would belong in `save.profile.settings`; the field
+  // does not exist yet, so it is read defensively and simply has no effect
+  // until `save.ts` adds it.
+  const params = new URLSearchParams(location.search);
+  const savedScale = (save.profile.settings as { renderScale?: number }).renderScale;
+  const rsParam = params.get('rs');
+  const fpsParam = Number(params.get('fps'));
+  if (Number.isFinite(fpsParam) && fpsParam > 0) r.targetFps = fpsParam;
+  if (rsParam && rsParam !== 'auto') {
+    const v = Number(rsParam);
+    if (Number.isFinite(v)) r.setRenderScale(v);
+  } else if (!rsParam && typeof savedScale === 'number') {
+    r.setRenderScale(savedScale);
+  }
+
   const resize = () => r.resize(stage.clientWidth, stage.clientHeight, 2);
   resize();
   window.addEventListener('resize', resize);
@@ -148,9 +173,15 @@ async function boot(): Promise<void> {
       stack.update(scaled);
       input.endFrame();
     },
-    render: (alpha) => {
+    render: (alpha, dt) => {
       ctx.alpha = alpha;
       stack.render();
+      // Fed the frame's wall time, not the render cost: the thing being held
+      // is the frame rate the player sees, and on a fill-bound game almost all
+      // of that time is spent on the GPU after `render()` has already
+      // returned. Measuring our own submit time would report 0.4 ms and never
+      // scale anything.
+      r.tickScaler(dt);
     },
   });
 

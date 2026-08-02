@@ -283,6 +283,56 @@ export class Renderer {
   /** Sprites rejected by the frustum test during the last frame. */
   spritesCulled = 0;
 
+  // ---------------------------------------------------------------------
+  // Render scale
+  //
+  // This game is fill-rate bound, not CPU bound: 0.1 ms of update and 0.4 ms
+  // of submit against a frame that the GPU spends milliseconds rasterising.
+  // At a 1280x720 CSS stage on a 2x display the backbuffer is 3.7 million
+  // pixels and the frame shades every one of them roughly five times over.
+  // Nothing in the draw list is waste any more — the previous pass culled,
+  // batched and cropped it — so the only remaining lever that does not cut
+  // content is to shade fewer pixels.
+  //
+  // The world pass therefore renders into an offscreen colour buffer at
+  // `renderScale` of device resolution and is blitted up on resolve; the HUD
+  // pass that follows runs at native resolution straight into the default
+  // framebuffer. That split matters: the painted backdrop is soft-edged and
+  // survives a resample almost invisibly, while glyph outlines and the HUD
+  // rings are exactly the high-contrast thin geometry that a resample
+  // destroys. Downscaling only what tolerates it is strictly better than
+  // downscaling the frame.
+  //
+  // `renderScale === 1` takes the offscreen path out entirely — the draw
+  // sequence is then bit-identical to the unscaled renderer, so the default
+  // look at rest cannot drift.
+  // ---------------------------------------------------------------------
+
+  /** Fraction of device resolution the world pass rasterises at. 1 = native. */
+  renderScale = 1;
+
+  /**
+   * Let the adaptive controller move `renderScale`. Cleared by an explicit
+   * `setRenderScale`, so a manual or persisted choice is never overridden.
+   */
+  autoScale = true;
+
+  /** Frame rate the adaptive controller steers toward. */
+  targetFps = 58;
+
+  /** Steps the adaptive controller is allowed to pick from, sharpest first. */
+  private readonly scaleLadder = [1, 0.85, 0.72, 0.6, 0.5];
+  private scaleStep = 0;
+
+  private fbo: WebGLFramebuffer | null = null;
+  private fboRb: WebGLRenderbuffer | null = null;
+  private fboW = 0;
+  private fboH = 0;
+  /** True while the offscreen buffer is bound and still needs resolving. */
+  private scaledPass = false;
+  /** Passes completed this frame. Pass 0 is the world; the rest are native. */
+  private passIndex = 0;
+
   constructor(canvas: HTMLCanvasElement, capacity = 16384) {
     this.canvas = canvas;
     const gl = canvas.getContext('webgl2', {
@@ -482,6 +532,11 @@ export class Renderer {
     this.vpH = vpH;
     this.vpTopCss = bandTop;
     this.gl.viewport(0, vpY, pw, vpH);
+    // The offscreen buffer is sized from the canvas, and what the machine can
+    // sustain depends on how many pixels that is — both are now stale.
+    this.fboW = 0;
+    this.fboH = 0;
+    this.resetScaler();
   }
 
   /** Convert a CSS-pixel pointer position into world coordinates. */
@@ -554,6 +609,220 @@ export class Renderer {
     this.drawCalls = 0;
     this.spritesDrawn = 0;
     this.spritesCulled = 0;
+    // Start of frame. The clear that follows must land in whatever buffer the
+    // world pass is about to draw into, so the target is selected here rather
+    // than in `begin()`.
+    this.passIndex = 0;
+    this.bindWorldTarget();
+  }
+
+  /**
+   * Pin the render scale and stop the adaptive controller touching it.
+   *
+   * `window.__renderScale(x)` routes here. Passing `null` hands control back
+   * to the controller.
+   */
+  setRenderScale(s: number | null): void {
+    if (s === null) {
+      this.autoScale = true;
+      return;
+    }
+    this.autoScale = false;
+    this.renderScale = s < 0.25 ? 0.25 : s > 1 ? 1 : s;
+    // Snap the ladder cursor to the nearest step so handing control back does
+    // not jump the resolution.
+    let best = 0;
+    for (let i = 1; i < this.scaleLadder.length; i++) {
+      if (Math.abs(this.scaleLadder[i] - this.renderScale) < Math.abs(this.scaleLadder[best] - this.renderScale)) best = i;
+    }
+    this.scaleStep = best;
+  }
+
+  // Adaptive controller state. Frame times are collected into a fixed window
+  // and judged in bulk; no allocation happens per frame.
+  private winMs = new Float32Array(24);
+  private winN = 0;
+  private cooldown = 0;
+  /** Grows each time a step up had to be undone, so probing backs off. */
+  private upPenalty = 0;
+  /** Ladder step the controller has learned not to climb past. */
+  private ceiling = 0;
+  private lastStepDir = 0;
+  private sinceStep = 0;
+
+  /**
+   * Feed one frame's wall time to the adaptive controller.
+   *
+   * Called once per rendered frame from the loop. The rules exist to make
+   * oscillation impossible rather than merely unlikely:
+   *
+   *  - Decisions are made on a window of 24 frames, using the 70th percentile
+   *    rather than the mean, so one long frame (a smash, a GC) cannot move the
+   *    resolution and a genuinely overloaded frame rate cannot hide behind a
+   *    few fast frames.
+   *  - The two thresholds are far apart. Stepping down needs the p70 frame to
+   *    exceed the budget by 12%; stepping back up needs it to fit in 74% of
+   *    the budget *at the coarser scale*, which is roughly the headroom the
+   *    finer scale will actually need. Nothing sits in both bands.
+   *  - Every change starts a cooldown, and stepping up costs more cooldown
+   *    than stepping down, because a wrong step down is invisible for half a
+   *    second and a wrong step up is a stutter.
+   *  - If a step up is undone within two seconds it is recorded as a failure:
+   *    the penalty doubles and the ladder gains a ceiling, so the controller
+   *    stops re-probing a scale the machine has already refused. That is what
+   *    turns "hysteresis" into a guarantee — after two failed probes it simply
+   *    stops trying.
+   */
+  tickScaler(dtSeconds: number): void {
+    if (!this.autoScale) return;
+    this.sinceStep += dtSeconds;
+    if (this.cooldown > 0) {
+      this.cooldown -= dtSeconds;
+      this.winN = 0;
+      return;
+    }
+    const ms = dtSeconds * 1000;
+    // A tab restore or a breakpoint is not a frame rate signal.
+    if (ms > 250) {
+      this.winN = 0;
+      return;
+    }
+    this.winMs[this.winN++] = ms;
+    if (this.winN < this.winMs.length) return;
+    this.winN = 0;
+
+    // p70 by insertion sort into a scratch copy — 24 elements, no allocation.
+    const w = this.winScratch;
+    w.set(this.winMs);
+    for (let i = 1; i < w.length; i++) {
+      const v = w[i];
+      let j = i - 1;
+      while (j >= 0 && w[j] > v) { w[j + 1] = w[j]; j--; }
+      w[j + 1] = v;
+    }
+    const p70 = w[Math.floor(w.length * 0.7)];
+    const budget = 1000 / this.targetFps;
+
+    if (p70 > budget * 1.12 && this.scaleStep < this.scaleLadder.length - 1) {
+      if (this.lastStepDir > 0 && this.sinceStep < 2) {
+        // The step up we just took did not hold. Do not try that rung again.
+        this.upPenalty = this.upPenalty === 0 ? 1 : this.upPenalty * 2;
+        if (this.upPenalty > 16) this.upPenalty = 16;
+        this.ceiling = this.scaleStep;
+      }
+      this.scaleStep++;
+      this.renderScale = this.scaleLadder[this.scaleStep];
+      this.cooldown = 0.4;
+      this.lastStepDir = -1;
+      this.sinceStep = 0;
+      return;
+    }
+
+    if (p70 < budget * 0.74 && this.scaleStep > this.ceiling) {
+      this.scaleStep--;
+      this.renderScale = this.scaleLadder[this.scaleStep];
+      this.cooldown = 1.2 + this.upPenalty * 1.2;
+      this.lastStepDir = 1;
+      this.sinceStep = 0;
+    }
+  }
+
+  private winScratch = new Float32Array(24);
+
+  /**
+   * Forget what the controller has learned about this machine.
+   *
+   * The ceiling and the probe penalty describe a load, not a device: once the
+   * heavy scene ends they are stale, and without a way to clear them the
+   * renderer would stay soft for the rest of the session. Called on resize and
+   * exposed for testing.
+   */
+  resetScaler(): void {
+    this.ceiling = 0;
+    this.upPenalty = 0;
+    this.winN = 0;
+    this.cooldown = 0;
+    this.lastStepDir = 0;
+  }
+
+  /**
+   * Point rendering at the offscreen buffer for the world pass.
+   *
+   * Allocation is lazy and only repeats when the size actually changes, so a
+   * steady scale costs one `bindFramebuffer` per frame. If the buffer cannot
+   * be made complete — an old driver, a lost context — the scale silently
+   * gives up and the frame renders native, which is correct, just slower.
+   */
+  private bindWorldTarget(): void {
+    const gl = this.gl;
+    const pw = this.canvas.width;
+    const ph = this.canvas.height;
+    this.scaledPass = false;
+
+    if (this.renderScale >= 0.999) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, this.vpY, pw, this.vpH || ph);
+      return;
+    }
+
+    const w = Math.max(1, Math.round(pw * this.renderScale));
+    const h = Math.max(1, Math.round(ph * this.renderScale));
+    if (!this.fbo || w !== this.fboW || h !== this.fboH) {
+      if (!this.fbo) {
+        this.fbo = gl.createFramebuffer();
+        this.fboRb = gl.createRenderbuffer();
+      }
+      gl.bindRenderbuffer(gl.RENDERBUFFER, this.fboRb);
+      // A renderbuffer, not a texture: the buffer is only ever blitted, never
+      // sampled, and a renderbuffer lets the driver pick its best layout.
+      gl.renderbufferStorage(gl.RENDERBUFFER, gl.RGBA8, w, h);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbo);
+      gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.RENDERBUFFER, this.fboRb);
+      gl.bindRenderbuffer(gl.RENDERBUFFER, null);
+      if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+        gl.deleteFramebuffer(this.fbo);
+        gl.deleteRenderbuffer(this.fboRb);
+        this.fbo = null;
+        this.fboRb = null;
+        this.fboW = 0;
+        this.fboH = 0;
+        this.renderScale = 1;
+        this.autoScale = false;
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.viewport(0, this.vpY, pw, this.vpH || ph);
+        return;
+      }
+      this.fboW = w;
+      this.fboH = h;
+    } else {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbo);
+    }
+
+    // The projection built by `begin()` is a ratio of world scale to viewport
+    // size, and both sides scale together here, so it needs no adjustment at
+    // all: the same matrix maps the same world rect onto the smaller viewport.
+    gl.viewport(
+      0,
+      Math.round(this.vpY * this.renderScale),
+      w,
+      Math.max(1, Math.round((this.vpH || ph) * this.renderScale)),
+    );
+    this.scaledPass = true;
+  }
+
+  /** Upscale the world pass onto the screen and switch to native rendering. */
+  private resolveWorldTarget(): void {
+    const gl = this.gl;
+    const pw = this.canvas.width;
+    const ph = this.canvas.height;
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, this.fbo);
+    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+    // Whole buffer, not the band: the clear covers the letterbox bars too, and
+    // blitting them keeps them identical to the unscaled path.
+    gl.blitFramebuffer(0, 0, this.fboW, this.fboH, 0, 0, pw, ph, gl.COLOR_BUFFER_BIT, gl.LINEAR);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, this.vpY, pw, this.vpH || ph);
+    this.scaledPass = false;
   }
 
   /**
@@ -625,7 +894,7 @@ export class Renderer {
     ) {
       this.spritesCulled++;
       return;
-    }
+    }
     if (this.count >= this.capacity) this.flush();
 
     // Texture slot. Runs of sprites share a texture, so the previous slot is
@@ -703,9 +972,20 @@ export class Renderer {
     this.lastSlot = 0;
   }
 
+  /**
+   * Finish a pass.
+   *
+   * The first pass of a frame is the world, and it is the one that renders at
+   * reduced scale; resolving here rather than at the next `begin()` means a
+   * frame that only ever runs one pass still reaches the screen.
+   */
   end(): void {
     this.flush();
     this.gl.bindVertexArray(null);
+    if (this.passIndex === 0) {
+      if (this.scaledPass) this.resolveWorldTarget();
+      this.passIndex = 1;
+    }
   }
 
   clear(r: number, g: number, b: number): void {

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-01T19:46:58.575Z",
+  "generatedAt": "2026-08-02T04:12:23.951Z",
   "assets": {
     "sky_dusk": {
       "id": "sky_dusk",
@@ -251,6 +251,132 @@
       "h": 1200,
       "opaque": false,
       "coverage": 0.198
+    },
+    "winter_sky": {
+      "id": "winter_sky",
+      "group": "sky",
+      "w": 1536,
+      "h": 1024,
+      "opaque": true
+    },
+    "winter_mountains": {
+      "id": "winter_mountains",
+      "group": "far",
+      "w": 1400,
+      "h": 933,
+      "opaque": false,
+      "coverage": 0.226
+    },
+    "winter_hills": {
+      "id": "winter_hills",
+      "group": "mid",
+      "w": 1400,
+      "h": 933,
+      "opaque": false,
+      "coverage": 0.184
+    },
+    "winter_ground": {
+      "id": "winter_ground",
+      "group": "ground",
+      "w": 1400,
+      "h": 933,
+      "opaque": false,
+      "coverage": 0.323
+    },
+    "winter_tree_pine": {
+      "id": "winter_tree_pine",
+      "group": "prop",
+      "w": 733,
+      "h": 1100,
+      "opaque": false,
+      "coverage": 0.306
+    },
+    "winter_tree_bare": {
+      "id": "winter_tree_bare",
+      "group": "prop",
+      "w": 733,
+      "h": 1100,
+      "opaque": false,
+      "coverage": 0.302
+    },
+    "winter_rock": {
+      "id": "winter_rock",
+      "group": "prop",
+      "w": 560,
+      "h": 560,
+      "opaque": false,
+      "coverage": 0.47
+    },
+    "winter_grass": {
+      "id": "winter_grass",
+      "group": "foreground",
+      "w": 460,
+      "h": 460,
+      "opaque": false,
+      "coverage": 0.348
+    },
+    "cave_backdrop": {
+      "id": "cave_backdrop",
+      "group": "sky",
+      "w": 1536,
+      "h": 1024,
+      "opaque": true
+    },
+    "cave_far_wall": {
+      "id": "cave_far_wall",
+      "group": "far",
+      "w": 1400,
+      "h": 933,
+      "opaque": false,
+      "coverage": 0.411
+    },
+    "cave_mid_rocks": {
+      "id": "cave_mid_rocks",
+      "group": "mid",
+      "w": 1400,
+      "h": 933,
+      "opaque": false,
+      "coverage": 0.332
+    },
+    "cave_ground": {
+      "id": "cave_ground",
+      "group": "ground",
+      "w": 1400,
+      "h": 933,
+      "opaque": false,
+      "coverage": 0.403
+    },
+    "cave_stalagmite": {
+      "id": "cave_stalagmite",
+      "group": "prop",
+      "w": 733,
+      "h": 1100,
+      "opaque": false,
+      "coverage": 0.303
+    },
+    "cave_crystal_cluster": {
+      "id": "cave_crystal_cluster",
+      "group": "prop",
+      "w": 700,
+      "h": 700,
+      "opaque": false,
+      "coverage": 0.402
+    },
+    "cave_mushroom_glow": {
+      "id": "cave_mushroom_glow",
+      "group": "prop",
+      "w": 560,
+      "h": 560,
+      "opaque": false,
+      "coverage": 0.368
+    },
+    "cave_moss": {
+      "id": "cave_moss",
+      "group": "foreground",
+      "w": 460,
+      "h": 460,
+      "opaque": false,
+      "coverage": 0.249
     }
   }
 }
