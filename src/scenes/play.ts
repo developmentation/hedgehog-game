@@ -14,7 +14,14 @@
  *
  * This file is orchestration only. The word, the walls, the hedgehog and the
  * HUD each own themselves; the scene owns the phase machine, the score and the
- * routing of input, and every feel constant it uses comes from `TUNING`.
+ * routing of input.
+ *
+ * What is *played* is a `LevelDef` (see `game/levels.ts`) — which words, how
+ * fast, how tall the columns, how forgiving, and what ends it. The scene holds
+ * one `LevelRun` and hands it to the session and the field; nothing here knows
+ * whether that level is the endless stream or a six-word themed sprint. Feel
+ * constants that are true of the whole game — dash timing, springs, camera,
+ * shake — still come from `TUNING`.
  */
 
 import type { Ctx, Scene, PlayProbe } from '../core/ctx';
@@ -24,6 +31,7 @@ import { Parallax } from '../game/parallax';
 import { TUNING } from '../game/tuning';
 import { WordSession } from '../game/wordSession';
 import { WallField, type Wall, type Block } from '../game/wallField';
+import { LevelRun, LEVELS, bootLevel, getLevel, type LevelDef } from '../game/levels';
 import { Player } from '../game/player';
 import {
   Hud,
@@ -79,11 +87,38 @@ const CHIP_STYLE: TextStyle = { size: 23 };
 /** How many deferred messages the banner channel will hold. */
 const NOTICE_QUEUE_MAX = 3;
 
+/** Seconds after a level ends before a press will restart it. */
+const RESTART_ARM = 0.8;
+
+/**
+ * What the harness can read about the level on top of the play state. Kept out
+ * of `PlayProbe` so the core contract stays as it was; `probe()` widens its
+ * return type instead.
+ */
+export interface LevelProbe {
+  level: string;
+  levelTitle: string;
+  theme: string;
+  goal: string;
+  /** 0..1 towards the goal. Always 0 in an endless level. */
+  goalProgress: number;
+  levelComplete: boolean;
+  wordsDone: number;
+  tier: number;
+  columnHeight: number;
+  targetSpeed: number;
+}
+
 export class PlayScene implements Scene {
   readonly name = 'play';
 
   private phase: Phase = 'intro';
   private phaseT = 0;
+
+  // --- the level being played ---
+  private run = new LevelRun(bootLevel());
+  /** A level change asked for from outside, applied at the top of `update`. */
+  private pendingLevel: LevelDef | null = null;
 
   // --- systems ---
   private session = new WordSession();
@@ -160,13 +195,69 @@ export class PlayScene implements Scene {
 
   enter(ctx: Ctx): void {
     (window as any).__probeFn = () => this.probe();
-    this.startWord(ctx, true);
-    this.phase = 'intro';
-    this.phaseT = 0;
+    // The only entry point a level needs: list what exists, ask for one. The
+    // request is queued rather than applied here, so it can be made from a
+    // console or a harness at any moment without landing mid-update.
+    (window as any).__levels = {
+      list: () => LEVELS.map((l) => ({ id: l.id, title: l.title, goal: l.goal.kind })),
+      current: () => this.run.config.id,
+      start: (id: string) => {
+        const def = getLevel(id);
+        if (def) this.pendingLevel = def;
+        return !!def;
+      },
+    };
+    this.startLevel(ctx, this.run.config.def);
   }
 
   exit(): void {
     (window as any).__probeFn = null;
+    (window as any).__levels = null;
+  }
+
+  // ------------------------------------------------------------------ level
+
+  /**
+   * Begin a run of one level. This is the only place a `LevelDef` becomes
+   * live: a fresh `LevelRun` is built and handed to the two systems that are
+   * shaped by it, and the scene's own totals are cleared.
+   */
+  private startLevel(ctx: Ctx, def: LevelDef): void {
+    this.run = new LevelRun(def);
+    const cfg = this.run.config;
+    this.session.configure(this.run);
+    this.field.configure(this.run);
+
+    this.score = 0;
+    this.scoreShown = 0;
+    this.combo = 0;
+    this.bestCombo = 0;
+    this.sparksEarned = 0;
+    this.floaters.length = 0;
+    this.noticeQueue.length = 0;
+    this.notice.kind = NOTICE_NONE;
+    this.scrollSpeed = TUNING.scroll.startSpeed;
+    // A level with no hop has nothing to teach about hopping.
+    this.jumpHinted = !cfg.allowJump;
+
+    this.startWord(ctx, true);
+    this.phase = 'intro';
+    this.phaseT = 0;
+
+    // The endless run boots exactly as it always has: silent, straight into
+    // the clue. Only a level with something to achieve announces itself.
+    if (cfg.goalKind !== 'endless') {
+      this.raiseNotice(cfg.title, this.run.progressLabel(), NOTICE_INFO, 1.8);
+    }
+  }
+
+  /** The goal is met: stop the run and leave the result on screen. */
+  private finishLevel(ctx: Ctx): void {
+    this.phase = 'gameover';
+    this.phaseT = 0;
+    this.raiseNotice('LEVEL COMPLETE', this.run.config.title, NOTICE_GOOD, 4);
+    ctx.audio.play('unlock', 1);
+    ctx.shake(TUNING.feel.shake.word, TUNING.feel.shake.wordTime);
   }
 
   // ---------------------------------------------------------------- session
@@ -175,7 +266,7 @@ export class PlayScene implements Scene {
     this.session.begin(ctx);
     this.slotPop = new Array(this.session.word.length).fill(0);
     this.misses = 0;
-    this.lives = TUNING.scoring.maxMisses;
+    this.lives = this.run.config.lives;
     // A new word owns the message region. Anything still congratulating the
     // last one is cut short rather than left to fight the incoming clue — and
     // cut short by fading, not by vanishing mid-sentence.
@@ -184,9 +275,10 @@ export class PlayScene implements Scene {
     const n = this.notice;
     if (n.kind !== NOTICE_NONE) n.life = Math.min(n.life, n.t + 0.3);
 
-    const S = TUNING.scroll;
-    this.targetSpeed = S.baseSpeed + this.session.tier * S.tierRamp;
-    if (!first) this.scrollSpeed = this.targetSpeed * S.resumeFactor;
+    // The level's difficulty shape decides the pace; TUNING decides how the
+    // world eases into it.
+    this.targetSpeed = this.run.speed;
+    if (!first) this.scrollSpeed = this.targetSpeed * TUNING.scroll.resumeFactor;
 
     this.phase = 'listening';
     this.phaseT = 0;
@@ -232,6 +324,11 @@ export class PlayScene implements Scene {
   // ----------------------------------------------------------------- update
 
   update(ctx: Ctx, dt: number): void {
+    if (this.pendingLevel) {
+      const def = this.pendingLevel;
+      this.pendingLevel = null;
+      this.startLevel(ctx, def);
+    }
     this.phaseT += dt;
     this.parallax.update(ctx, dt);
     this.particles.update(dt);
@@ -262,7 +359,7 @@ export class PlayScene implements Scene {
         if (this.phaseT > TUNING.feel.setbackHold) {
           this.phase = 'playing';
           this.phaseT = 0;
-          this.lives = TUNING.scoring.maxMisses;
+          this.lives = this.run.config.lives;
           this.misses = 0;
         }
         break;
@@ -369,6 +466,7 @@ export class PlayScene implements Scene {
 
   /** Phases in which leaving the ground makes sense at all. */
   private canJumpNow(): boolean {
+    if (!this.run.config.allowJump) return false;
     return this.phase === 'playing' || this.phase === 'listening' || this.phase === 'setback';
   }
 
@@ -402,6 +500,10 @@ export class PlayScene implements Scene {
   private updateCelebrate(ctx: Ctx, dt: number): void {
     if (this.phaseT < TUNING.feel.celebrateHold) {
       this.player.confetti(ctx, dt);
+    } else if (this.run.complete) {
+      // The goal was met by the word we have just finished celebrating. An
+      // endless level never reaches here, which is the whole of its specialness.
+      this.finishLevel(ctx);
     } else {
       this.session.promote(this.bestCombo);
       this.startWord(ctx);
@@ -436,12 +538,22 @@ export class PlayScene implements Scene {
       return;
     }
 
+    // The level is over. The only input left is "again", and it is armed a
+    // beat late so the tap that finished the level cannot restart it.
+    if (this.phase === 'gameover') {
+      if (this.phaseT > RESTART_ARM && ctx.input.anyPressed) {
+        this.startLevel(ctx, this.run.config.def);
+      }
+      return;
+    }
+
     const busy = this.player.isBusy() || this.phase === 'celebrate';
     // Space and the Up arrow arrive here; the intro branch above has already
     // returned, so the confirm-key overload can never eat the hop.
     let wantJump = ctx.input.jumpPressed;
+    const hopping = this.run.config.allowJump;
 
-    this.jumpBtn.layout(ctx);
+    if (hopping) this.jumpBtn.layout(ctx);
 
     for (const tap of ctx.input.taps) {
       // The hint button always wins — the player must be able to re-hear the
@@ -454,7 +566,7 @@ export class PlayScene implements Scene {
       }
       // The control is tested before the field, so a column drifting behind it
       // can never steal a press meant for the button.
-      if (this.jumpBtn.hit(tap.x, tap.y)) {
+      if (hopping && this.jumpBtn.hit(tap.x, tap.y)) {
         this.jumpBtn.bump();
         wantJump = true;
         continue;
@@ -500,6 +612,7 @@ export class PlayScene implements Scene {
   }
 
   private tryJump(ctx: Ctx): void {
+    if (!this.run.config.allowJump) return;
     this.jumpBtn.bump();
     if (!this.canJumpNow()) return;
     if (!this.player.jump(ctx)) return;
@@ -648,7 +761,7 @@ export class PlayScene implements Scene {
 
     const slot = this.session.revert();
     if (slot >= 0) this.slotPop[slot] = 1;
-    const lost = Math.round(this.score * C.setbackScoreLoss);
+    const lost = Math.round(this.score * this.run.config.setbackCost);
     this.score = Math.max(0, this.score - lost);
     this.bestCombo = 0;
 
@@ -677,6 +790,14 @@ export class PlayScene implements Scene {
     this.score += bonus;
     this.sparksEarned += Math.round(bonus * C.sparkShareWord);
     this.raiseNotice('WORD COMPLETE', `+${bonus} BONUS`, NOTICE_GOOD, 1.1);
+
+    // Bank the word against the level's goal, then say where that leaves us.
+    // The line queues behind the completion banner rather than fighting it,
+    // and an endless level has nothing to report so it says nothing.
+    const done = this.run.noteWord(this.score, this.bestCombo);
+    if (this.run.config.goalKind !== 'endless' && !done) {
+      this.raiseNotice('GOAL', this.run.progressLabel(), NOTICE_INFO, 1.2);
+    }
 
     const p = ctx.save.profile;
     p.wordsCompleted++;
@@ -830,6 +951,8 @@ export class PlayScene implements Scene {
    * gentle pull-focus for as long as the player has never used it.
    */
   private drawJumpButton(ctx: Ctx): void {
+    // A level that has taken the hop away does not show its control either.
+    if (!this.run.config.allowJump) return;
     const live = this.canJumpNow() || this.phase === 'intro';
     const ready = this.player.canJump() && this.canJumpNow();
     this.jumpBtn.draw(ctx, ready, live ? this.player.jumpCharge() : 0);
@@ -929,7 +1052,8 @@ export class PlayScene implements Scene {
 
   // ------------------------------------------------------------------ probe
 
-  probe(): PlayProbe {
+  probe(): PlayProbe & LevelProbe {
+    const cfg = this.run.config;
     const targets: PlayProbe['targets'] = [];
     for (const w of this.field.walls) {
       if (w.x < -100 || w.x > VIEW_W + 100) continue;
@@ -951,6 +1075,16 @@ export class PlayScene implements Scene {
       playerState: this.player.state,
       airHeight: GROUND_Y - this.player.y,
       jumpBtn: { x: this.jumpBtn.cx, y: this.jumpBtn.cy, d: this.jumpBtn.d },
+      level: cfg.id,
+      levelTitle: cfg.title,
+      theme: cfg.theme,
+      goal: cfg.goalKind,
+      goalProgress: this.run.progress,
+      levelComplete: this.run.complete,
+      wordsDone: this.run.wordsDone,
+      tier: this.session.tier,
+      columnHeight: this.run.columnHeight,
+      targetSpeed: this.targetSpeed,
     };
   }
 }

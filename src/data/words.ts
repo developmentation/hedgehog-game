@@ -394,6 +394,55 @@ export function wordsByTier(tier: number): WordEntry[] {
 /** Every distinct letter used across the bank, for building letter walls. */
 export const ALPHABET: string[] = [...new Set(WORDS.flatMap((w) => w.word.split('')))].sort();
 
+/**
+ * A declarative slice of the bank.
+ *
+ * Every field is optional and every present field is ANDed, so `{}` means the
+ * whole bank and `{ topics: ['ocean'], tiers: [2, 3] }` means "ocean words at
+ * tiers 2 and 3". This is what a level descriptor carries instead of a tier
+ * number — see `src/game/levels.ts`.
+ */
+export interface WordQuery {
+  /** Difficulty tiers to draw from. */
+  tiers?: readonly number[];
+  /** Topic tags to draw from, matched exactly against `WordEntry.topic`. */
+  topics?: readonly string[];
+  /** Specific words, uppercase. Useful for a hand-authored set piece. */
+  ids?: readonly string[];
+  /** Letter-count window, inclusive. */
+  minLen?: number;
+  maxLen?: number;
+}
+
+/**
+ * Resolve a query against the bank.
+ *
+ * Called once when a level is resolved, never per frame — the result is the
+ * level's word pool for its whole run.
+ */
+export function queryWords(q: WordQuery): WordEntry[] {
+  const out: WordEntry[] = [];
+  for (const w of WORDS) {
+    if (q.tiers && q.tiers.indexOf(w.tier) < 0) continue;
+    if (q.topics && q.topics.indexOf(w.topic) < 0) continue;
+    if (q.ids && q.ids.indexOf(w.word) < 0) continue;
+    if (q.minLen !== undefined && w.word.length < q.minLen) continue;
+    if (q.maxLen !== undefined && w.word.length > q.maxLen) continue;
+    out.push(w);
+  }
+  return out;
+}
+
+/** The distinct tiers present in a set of entries, ascending. */
+export function tiersIn(entries: readonly WordEntry[]): number[] {
+  const seen: number[] = [];
+  for (const w of entries) if (seen.indexOf(w.tier) < 0) seen.push(w.tier);
+  return seen.sort((a, b) => a - b);
+}
+
+/** Every topic tag in the bank, alphabetical. Handy when authoring a level. */
+export const TOPICS: string[] = [...new Set(WORDS.map((w) => w.topic))].sort();
+
 /** Validated at module load in dev: throws if any entry breaks the rules. */
 export function validateWordBank(): string[] {
   const problems: string[] = [];

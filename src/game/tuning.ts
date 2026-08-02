@@ -13,6 +13,16 @@
  *
  * Purely compositional constants — sprite offsets, cull bounds, HUD layout —
  * stay next to the code that draws them. This file is about feel, not framing.
+ *
+ * What is NOT here: anything that varies from one level to the next. Which
+ * words a run draws from, how fast it scrolls, how tall its columns are, how
+ * its decoys are chosen, how forgiving it is and when it ends are all
+ * properties of a `LevelDef` — see `game/levels.ts`. The numbers below that
+ * still smell like difficulty (`scroll.baseSpeed`, `scroll.tierRamp`,
+ * `walls.heightMin/Max`, `scoring.maxMisses`, `scoring.maxTier`) are the
+ * FALLBACKS and CEILINGS a level is resolved against: a descriptor that says
+ * nothing about pace gets its shape from them, and no descriptor can exceed
+ * them.
  */
 
 export const TUNING = {
@@ -20,9 +30,13 @@ export const TUNING = {
   scroll: {
     /** Speed the world holds before the first word sets a target. Lower = calmer boot. */
     startSpeed: 250,
-    /** Target speed floor, before the per-tier ramp is added. Lower = easier everywhere. */
+    /**
+     * Default pacing floor and step for a level that does not state its own
+     * `pacing.startSpeed` / `endSpeed`: such a level ramps from
+     * `baseSpeed + tierRamp` to `baseSpeed + maxTier * tierRamp`. A level that
+     * does state them ignores both. Lower = easier everywhere.
+     */
     baseSpeed: 230,
-    /** Added to the target speed for each difficulty tier. Lower = easier as tiers climb. */
     tierRamp: 26,
     /** Fraction of target speed held while the word is being spoken. Lower = more listening room. */
     listenFactor: 0.75,
@@ -182,9 +196,12 @@ export const TUNING = {
     seedCount: 3,
     /** Height of the bottom block above the ground line. */
     baseLift: 62,
-    /** Column height = base + tier/perTier, clamped. Fewer blocks = fewer decoys = easier. */
-    heightBase: 2,
-    heightPerTier: 1.6,
+    /**
+     * Hard bounds on a column, whatever a level's `pacing.columnHeight` asks
+     * for — and the default range when it asks for nothing. Fewer blocks =
+     * fewer decoys = easier. heightMax is a framing limit as much as a
+     * difficulty one: taller than this and a column leaves the screen.
+     */
     heightMin: 2,
     heightMax: 5,
     /** Scale-in speed on spawn, and how fast a neighbour's jolt settles. */
@@ -219,9 +236,13 @@ export const TUNING = {
 
   /** Points, combo, lives and what a mistake costs. */
   scoring: {
-    /** Misses allowed before a setback. Higher = easier. */
+    /**
+     * Misses allowed before a setback, unless a level overrides it with
+     * `rules.lives`. Higher = easier. Also sizes the HUD's heart row, which is
+     * why a level asking for more than this gets them but cannot show them.
+     */
     maxMisses: 3,
-    /** Hardest difficulty tier the session can climb to. */
+    /** Hardest difficulty tier any level's tier ladder may reach. */
     maxTier: 5,
     /** Base points for a smashed letter, before combo and tier multipliers. */
     perLetter: 50,
@@ -230,7 +251,8 @@ export const TUNING = {
     comboCap: 9,
     /** Points lost per tier on a miss, capped at the current score. Lower = kinder. */
     missPenaltyPerTier: 40,
-    /** Fraction of the score surrendered to a setback. Lower = kinder. */
+    /** Fraction of the score surrendered to a setback, unless a level overrides
+     * it with `rules.setbackCost`. Lower = kinder. */
     setbackScoreLoss: 0.15,
     /** World units the walls are shoved back on a setback — the ground you lose. */
     setbackPushBack: 320,

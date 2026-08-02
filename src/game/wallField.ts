@@ -38,6 +38,7 @@ import { BLOCK_W, BLOCK_H } from '../art/letters';
 import { Blend, type Frame } from '../engine/gl';
 import type { EmitOptions, Particles } from './particles';
 import { TUNING } from './tuning';
+import { LevelRun, DEFAULT_LEVEL } from './levels';
 import type { WordSession } from './wordSession';
 
 export interface Block {
@@ -197,6 +198,12 @@ export class WallField {
   /** Letter pool reused by `spawn` so building a column never allocates. */
   private pool: string[] = [];
 
+  /**
+   * The active run. Column height and decoy mix are level properties, not
+   * global ones, so they are read from here rather than from TUNING.
+   */
+  private run: LevelRun = new LevelRun(DEFAULT_LEVEL);
+
   // Resolved once per draw: painted sprite if present, procedural if not.
   private faceFrame: (Frame | null)[] = [null, null, null];
   private faceKx = [0, 0, 0];
@@ -206,6 +213,11 @@ export class WallField {
 
   constructor(particles: Particles) {
     this.particles = particles;
+  }
+
+  /** Point the field at a level. Called once when a run starts. */
+  configure(run: LevelRun): void {
+    this.run = run;
   }
 
   /** Clear the field and lay down a fresh runway for a new word. */
@@ -221,8 +233,10 @@ export class WallField {
     const word = session.word;
 
     // Every wall must contain the letter the player needs next, plus decoys.
-    // Decoys are drawn from the word's own letters first so the choice is a
-    // real spelling decision rather than a visual search.
+    // How the decoys are chosen is a level property: at bias 0 they come from
+    // the word's own letters, so the choice is a real spelling decision rather
+    // than a visual search; at bias 1 they come from the alphabet, which is a
+    // harder read and a different kind of level.
     //
     // Only walls the player can STILL REACH may advance the target index. A
     // wall that has already scrolled past is unusable, so counting it here
@@ -237,22 +251,32 @@ export class WallField {
     const needIndex = Math.min(session.nextIndex + reachable, word.length - 1);
     const need = word[needIndex];
 
-    const height = clamp(
-      T.heightBase + Math.floor(session.tier / T.heightPerTier),
-      T.heightMin,
-      T.heightMax,
-    );
+    const height = clamp(this.run.columnHeight, T.heightMin, T.heightMax);
+    const bias = this.run.config.decoyBias;
 
     const pool = this.pool;
     pool.length = 0;
     pool.push(need);
-    for (let i = 0; i < word.length && pool.length < height; i++) {
-      const c = word[i];
-      if (pool.indexOf(c) < 0) pool.push(c);
-    }
+    // Walk the word's own letters in order for the "spelling decision" decoys,
+    // and roll against the bias for each remaining slot. The needed letter is
+    // already in — nothing below can make the column unwinnable.
+    let wi = 0;
     while (pool.length < height) {
-      const c = String.fromCharCode(65 + ctx.rng.int(0, 26));
-      if (pool.indexOf(c) < 0) pool.push(c);
+      let c = '';
+      if (ctx.rng.next() >= bias) {
+        while (wi < word.length && pool.indexOf(word[wi]) >= 0) wi++;
+        if (wi < word.length) c = word[wi++];
+      }
+      if (!c) {
+        // Bounded retries: at 26 letters and a 5-block ceiling a fresh letter
+        // is found immediately, and the guard means no unbounded spin.
+        for (let k = 0; k < 12 && !c; k++) {
+          const r = String.fromCharCode(65 + ctx.rng.int(0, 26));
+          if (pool.indexOf(r) < 0) c = r;
+        }
+        if (!c) break;
+      }
+      pool.push(c);
     }
     ctx.rng.shuffle(pool);
 
