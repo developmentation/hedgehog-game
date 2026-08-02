@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "capture": "node tools/capture.mjs",
     "shot": "node tools/shot.mjs",
-    "gallery": "node tools/gallery.mjs"
+    "gallery": "node tools/gallery.mjs",
+    "package": "node tools/package.mjs"
   },
   "devDependencies": {
     "playwright": "^1.48.0",

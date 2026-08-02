@@ -9,3 +9,7 @@ art-src/contact-sheet.png
 dist/
 node_modules/
 *.zip
+
+deploy-game.zip
+.deploy-stage/
+.verify-extract/
