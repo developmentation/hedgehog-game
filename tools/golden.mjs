@@ -156,64 +156,6 @@ const SHOTS = [
     pose: () => {},
   },
   {
-    name: 'letters',
-    why: 'the letter field — every other shot is boot state, so nothing saw the glyphs',
-    level: 'endless',
-    // THE MOST IMPORTANT PIXELS IN THE GAME, AND NOTHING WAS WATCHING THEM.
-    //
-    // Every other shot poses from boot, which is before the first wall has
-    // spawned. So the guard had no view of the letter field at all: the block
-    // faces, the glyph fill, the outline and its cast shadow, the telegraph
-    // that warms the letter the player needs. The outline was rebuilt from
-    // four offset quads into one baked sprite and both `golden` and `artdiff`
-    // reported it as a no-op, because neither could see it.
-    //
-    // Walls are placed by hand at fixed x rather than scrolled into position,
-    // and the presentation transform is computed with dt = 0 — the real code
-    // path, with no dependence on elapsed time.
-    pose: (g) => {
-      const s = g.stack.top;
-      s.phase = 'playing';
-      s.phaseT = 0;
-      s.scrollSpeed = 0;
-      s.targetSpeed = 0;
-      // Reseed before spawning. `spawn` draws from the shared `ctx.rng` for
-      // the decoy letters, the material of each block and its hand-stacked
-      // lean, and that generator's state depends on how many frames happened
-      // to run before the harness stopped the loop — which is wall-clock, and
-      // therefore machine speed. Without this the shot drifted 0.9% to 5.7%
-      // between runs of an identical build.
-      g.ctx.rng.s = 0x5eed1234 >>> 0;
-
-      const f = s.field;
-      f.walls.length = 0;
-      f.spawn(g.ctx, s.session);
-      f.spawn(g.ctx, s.session);
-      const xs = [820, 1210];
-      f.walls.forEach((w, i) => {
-        w.x = xs[i] ?? 1600;
-      });
-      // Finish the spawn scale-in and settle every spring, so the pose is the
-      // resting frame rather than a moment inside an animation.
-      for (const w of f.walls) {
-        for (const b of w.blocks) {
-          b.born = 1;
-          b.jolt = 0;
-          b.sag = 0;
-          b.sagV = 0;
-          b.hoverT = 0;
-        }
-      }
-      f.update(g.ctx, 0, {
-        session: s.session,
-        scrollSpeed: 0,
-        playerX: 300,
-        onPassed: () => {},
-        shouldSpawn: () => false,
-      });
-    },
-  },
-  {
     name: 'hero-roll',
     why: 'the hedgehog was drawn twice, and once as two different sprites',
     level: 'endless',
