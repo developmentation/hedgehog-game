@@ -44,7 +44,7 @@ import type { Ctx } from '../core/ctx';
 import { WORD_BAR_H, PLAYER_X, clamp } from '../core/ctx';
 import { INK, rgb } from '../art/palette';
 import { drawText, type TextStyle } from './text';
-import { roundedPanel, roundedRing } from '../scenes/shop';
+import { plate, plateRing, plateShadow, mergeShadow, snapX, snapY } from './plate';
 
 /** Disc diameter in world units, and the CSS-pixel floor it is held above. */
 const BASE_D = 132;
@@ -87,6 +87,9 @@ const C_DIM = rgb(INK.paperShade);
 
 /** Reused so the label costs no allocation per frame. */
 const LABEL: TextStyle = { size: 19 };
+
+/** Where the disc's body colour is premixed with its own cast shadow. */
+const MERGED: [number, number, number] = [0, 0, 0];
 
 export class JumpButton {
   /** Centre and radius in world units, refreshed by `layout` every frame. */
@@ -153,19 +156,26 @@ export class JumpButton {
       ctx.input.hasHover && this.hit(ctx.input.hoverX, ctx.input.hoverY);
     const p = this.press;
     const d = this.d * (1 - p * 0.08);
-    const x = this.cx - d / 2;
-    const y = this.cy - d / 2 + p * 4;
+    const bx = this.cx;
+    const by = this.cy + p * 4;
     const rad = d / 2;
     const on = this.lit;
 
     // Body: the same dusk glass as every other floating control, so the button
     // reads as part of the interface and not as a sticker on top of it.
-    roundedPanel(ctx, x, y + 7, d, d, rad, C_DARK, 0.4 * (0.5 + on * 0.5));
-    roundedPanel(ctx, x, y, d, d, rad, C_PANEL, 0.72 + on * 0.2);
-    roundedRing(
+    //
+    // The shadow under it is drawn only where the disc does not cover it; the
+    // part that did show through the translucent body is premixed into the
+    // body's colour, which composites identically for one plate instead of two.
+    const shadowA = 0.4 * (0.5 + on * 0.5);
+    const bodyA = 0.72 + on * 0.2;
+    plateShadow(ctx, bx, by, d, d, rad, 7, C_DARK, shadowA);
+    const mergedA = mergeShadow(C_PANEL, bodyA, C_DARK, shadowA, MERGED);
+    plate(ctx, bx, by, d, d, rad, MERGED, mergedA);
+    plateRing(
       ctx,
-      x,
-      y,
+      bx,
+      by,
       d,
       d,
       rad,
@@ -180,8 +190,8 @@ export class JumpButton {
     const cc = on > 0.5 ? C_PAPER : C_DIM;
     r.draw(
       caret,
-      this.cx,
-      this.cy - d * 0.1 + p * 4,
+      snapX(r, this.cx),
+      snapY(r, by - d * 0.1),
       cw / caret.w,
       -((cw * 0.68) / caret.h),
       0,
@@ -197,7 +207,8 @@ export class JumpButton {
     LABEL.alpha = 0.4 + on * 0.45;
     LABEL.tracking = 0.2;
     LABEL.shadow = 2;
-    drawText(ctx, 'JUMP', this.cx, this.cy + d * 0.24 + p * 4, LABEL);
+    LABEL.snap = true;
+    drawText(ctx, 'JUMP', this.cx, by + d * 0.24, LABEL);
 
     // Cooldown lamp: a pill under the label that drains on take-off and refills
     // as the hop comes back. This is the only place the cost of the move is
@@ -205,7 +216,7 @@ export class JumpButton {
     // the rest of the disc is dim.
     const pill = ctx.atlas.get('ui/bar_pill');
     const trackW = d * 0.46;
-    const ty = this.cy + d * 0.36 + p * 4;
+    const ty = by + d * 0.36;
     r.draw(pill, this.cx, ty, trackW / pill.w, 5 / pill.h, 0, C_DIM[0], C_DIM[1], C_DIM[2], 0.22);
     const fw = trackW * clamp(charge, 0, 1);
     if (fw > 1) {

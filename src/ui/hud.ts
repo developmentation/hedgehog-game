@@ -41,8 +41,9 @@
  *
  *   - text over the painted world always gets either a panel or a soft dark
  *     scrim behind it, never bare glyphs;
- *   - panels are built from `ui/corner` + stretched pixels, so every rounded
- *     shape in the HUD shares a single corner radius language;
+ *   - every rounded shape goes through `ui/plate`, which owns the corner radius
+ *     language, the device-pixel grid the HUD lands on, and the rule that a
+ *     cast shadow is only drawn where it is not covered by the plate above it;
  *   - all additive work happens in one pass, so the HUD costs two blend
  *     switches and no extra texture binds.
  */
@@ -50,6 +51,7 @@
 import type { Ctx, PlayProbe } from '../core/ctx';
 import { clamp, easeOutBack, easeOutCubic, smoothstep } from '../core/ctx';
 import { drawText, measureText, wrapText, lineHeight, shadowFor, TABULAR } from './text';
+import { plate, plateRing, plateShadow, mergeShadow, snapX, snapY } from './plate';
 import { INK, rgb } from '../art/palette';
 import { Blend } from '../engine/gl';
 import { TUNING } from '../game/tuning';
@@ -159,6 +161,10 @@ const C_PANEL_LIT: [number, number, number] = [0.13, 0.15, 0.29];
 const C_WELL: [number, number, number] = [0.04, 0.045, 0.105];
 const C_DEAD: [number, number, number] = [0.26, 0.27, 0.36];
 const SCRATCH: [number, number, number] = [1, 1, 1];
+/** Where `mergeShadow` writes a plate's premixed body colour. Reused, never grown. */
+const MERGED: [number, number, number] = [0, 0, 0];
+/** Second scratch triple, for a colour that has to outlive `mix`'s SCRATCH. */
+const ACCENT: [number, number, number] = [1, 1, 1];
 
 function mix(
   a: [number, number, number],
@@ -172,8 +178,6 @@ function mix(
 }
 
 // -------------------------------------------------------------------- layout
-
-const HALF_PI = Math.PI / 2;
 
 /** Inset from whichever screen edge an element is pinned to. */
 const EDGE_X = 28;
@@ -444,12 +448,6 @@ export class Hud {
 
     // --- foreground text ---------------------------------------------------
     this.drawFloaters(ctx, s, L);
-
-    if (!ctx.rawMode) {
-
-      const vig = ctx.atlas.get('ui/vignette');
-    
-    }
   }
 
   /** Refresh the per-word and per-value caches. Allocates only when they change. */
@@ -490,82 +488,6 @@ export class Hud {
   }
 
   // ---------------------------------------------------------------- panels
-
-  /**
-   * A rounded panel: four rotated quarter-discs plus up to three stretched
-   * pixels. Every rounded shape in the HUD goes through here, which is what
-   * keeps the corner language consistent without a painter per panel size.
-   */
-  private panel(
-    ctx: Ctx,
-    cx: number,
-    cy: number,
-    w: number,
-    h: number,
-    rad: number,
-    c: [number, number, number],
-    a: number,
-  ): void {
-    const r = ctx.r;
-    const px = ctx.atlas.get('ui/pixel');
-    const co = ctx.atlas.get('ui/corner');
-    const rr = Math.min(rad, w * 0.5, h * 0.5);
-    const sc = rr / co.w;
-    const x0 = cx - w / 2 + rr / 2;
-    const x1 = cx + w / 2 - rr / 2;
-    const y0 = cy - h / 2 + rr / 2;
-    const y1 = cy + h / 2 - rr / 2;
-    r.draw(co, x0, y0, sc, sc, 0, c[0], c[1], c[2], a);
-    r.draw(co, x1, y0, sc, sc, HALF_PI, c[0], c[1], c[2], a);
-    r.draw(co, x1, y1, sc, sc, Math.PI, c[0], c[1], c[2], a);
-    r.draw(co, x0, y1, sc, sc, -HALF_PI, c[0], c[1], c[2], a);
-
-    const midW = w - rr * 2;
-    if (midW > 0.5) {
-      r.draw(px, cx, y0, midW / px.w, rr / px.h, 0, c[0], c[1], c[2], a);
-      r.draw(px, cx, y1, midW / px.w, rr / px.h, 0, c[0], c[1], c[2], a);
-    }
-    const midH = h - rr * 2;
-    if (midH > 0.5) r.draw(px, cx, cy, w / px.w, midH / px.h, 0, c[0], c[1], c[2], a);
-  }
-
-  /** The outline that matches `panel`. Stroke weight is a fixed 1/8 of the radius. */
-  private ring(
-    ctx: Ctx,
-    cx: number,
-    cy: number,
-    w: number,
-    h: number,
-    rad: number,
-    c: [number, number, number],
-    a: number,
-  ): void {
-    const r = ctx.r;
-    const px = ctx.atlas.get('ui/pixel');
-    const co = ctx.atlas.get('ui/corner_ring');
-    const rr = Math.min(rad, w * 0.5, h * 0.5);
-    const sc = rr / co.w;
-    const lw = rr / 8;
-    const x0 = cx - w / 2 + rr / 2;
-    const x1 = cx + w / 2 - rr / 2;
-    const y0 = cy - h / 2 + rr / 2;
-    const y1 = cy + h / 2 - rr / 2;
-    r.draw(co, x0, y0, sc, sc, 0, c[0], c[1], c[2], a);
-    r.draw(co, x1, y0, sc, sc, HALF_PI, c[0], c[1], c[2], a);
-    r.draw(co, x1, y1, sc, sc, Math.PI, c[0], c[1], c[2], a);
-    r.draw(co, x0, y1, sc, sc, -HALF_PI, c[0], c[1], c[2], a);
-
-    const midW = w - rr * 2;
-    if (midW > 0.5) {
-      r.draw(px, cx, cy - h / 2 + lw / 2, midW / px.w, lw / px.h, 0, c[0], c[1], c[2], a);
-      r.draw(px, cx, cy + h / 2 - lw / 2, midW / px.w, lw / px.h, 0, c[0], c[1], c[2], a);
-    }
-    const midH = h - rr * 2;
-    if (midH > 0.5) {
-      r.draw(px, cx - w / 2 + lw / 2, cy, lw / px.w, midH / px.h, 0, c[0], c[1], c[2], a);
-      r.draw(px, cx + w / 2 - lw / 2, cy, lw / px.w, midH / px.h, 0, c[0], c[1], c[2], a);
-    }
-  }
 
   /**
    * Soft dark halo. The one legibility treatment used for every piece of text
@@ -619,10 +541,16 @@ export class Hud {
 
     // Soft dark bed instead of a hard slab edge: the plaque sits *on* the bank
     // rather than covering it.
+    //
+    // The plaque is translucent, so the cast shadow underneath it is not
+    // invisible — it darkens the plaque's interior by 6% of the ink. That wash
+    // is folded into the plaque's own colour rather than drawn as a second
+    // full-size panel, which is the same composite for a third of the fill.
     this.scrim(ctx, L.cx, plaqueCY + 10, plaqueW * 1.16, plaqueH * 2.1, 0.62);
-    this.panel(ctx, L.cx, plaqueCY + 7, plaqueW, plaqueH, PLAQUE_RAD, C_DARK, 0.3);
-    this.panel(ctx, L.cx, plaqueCY, plaqueW, plaqueH, PLAQUE_RAD, C_PANEL, 0.8);
-    this.ring(ctx, L.cx, plaqueCY, plaqueW, plaqueH, PLAQUE_RAD, C_PAPER, 0.2);
+    plateShadow(ctx, L.cx, plaqueCY, plaqueW, plaqueH, PLAQUE_RAD, 7, C_DARK, 0.3);
+    const plaqueA = mergeShadow(C_PANEL, 0.8, C_DARK, 0.3, MERGED);
+    plate(ctx, L.cx, plaqueCY, plaqueW, plaqueH, PLAQUE_RAD, MERGED, plaqueA);
+    plateRing(ctx, L.cx, plaqueCY, plaqueW, plaqueH, PLAQUE_RAD, C_PAPER, 0.2);
 
     // Progress, read as one continuous quantity along the plaque's bottom lip
     // rather than counted off the slots.
@@ -769,17 +697,20 @@ export class Hud {
     const px = ctx.atlas.get('ui/pixel');
 
     // A tier-5 column crosses this band. Solid plate + cast shadow + lit rim,
-    // so a block sliding behind it is unambiguously behind it.
-    this.panel(ctx, L.stripCX, L.rowCY + 9, L.stripW, STRIP_H, STRIP_RAD, C_DARK, STRIP_SHADOW_A);
-    this.panel(ctx, L.stripCX, L.rowCY, L.stripW, STRIP_H, STRIP_RAD, C_PANEL, STRIP_BODY_A);
-    this.ring(ctx, L.stripCX, L.rowCY, L.stripW, STRIP_H, STRIP_RAD, C_PAPER, STRIP_RING_A);
+    // so a block sliding behind it is unambiguously behind it. The plate is
+    // 99% opaque, so its shadow is only drawn where it actually shows.
+    plateShadow(ctx, L.stripCX, L.rowCY, L.stripW, STRIP_H, STRIP_RAD, 9, C_DARK, STRIP_SHADOW_A);
+    const stripA = mergeShadow(C_PANEL, STRIP_BODY_A, C_DARK, STRIP_SHADOW_A, MERGED);
+    plate(ctx, L.stripCX, L.rowCY, L.stripW, STRIP_H, STRIP_RAD, MERGED, stripA);
+    plateRing(ctx, L.stripCX, L.rowCY, L.stripW, STRIP_H, STRIP_RAD, C_PAPER, STRIP_RING_A);
 
-    const labelY = L.rowCY - 17;
-    const numY = L.rowCY + 9;
+    const rowY = snapY(r, L.rowCY);
+    const labelY = rowY - 17;
+    const numY = rowY + 9;
 
     // Score: secondary. Small caps label, tabular figures, warm but not loud.
     const spark = ctx.atlas.get('ui/spark');
-    r.draw(spark, L.sparkX, numY, 30 / spark.w, 30 / spark.h, 0, C_GOLD[0], C_GOLD[1], C_GOLD[2], 0.9);
+    r.draw(spark, snapX(r, L.sparkX), snapY(r, numY), 30 / spark.w, 30 / spark.h, 0, C_GOLD[0], C_GOLD[1], C_GOLD[2], 0.9);
     drawText(ctx, 'SCORE', L.scoreX, labelY, {
       size: TYPE.caption,
       color: C_PAPER_DIM,
@@ -787,6 +718,7 @@ export class Hud {
       tracking: 0.24,
       shadow: 2,
       shadowAlpha: 0.6,
+      snap: true,
     });
     drawText(ctx, this.scoreStr, L.scoreX, numY, {
       size: TYPE.score,
@@ -794,9 +726,10 @@ export class Hud {
       mono: TABULAR,
       shadow: shadowFor(TYPE.score),
       shadowAlpha: 0.55,
+      snap: true,
     });
 
-    r.draw(px, L.dividerX, L.rowCY, 2 / px.w, (STRIP_H - 34) / px.h, 0, 1, 1, 1, 0.16);
+    r.draw(px, snapX(r, L.dividerX), rowY, 2 / px.w, (STRIP_H - 34) / px.h, 0, 1, 1, 1, 0.16);
 
     // Lives: quiet status. Only the last one moves, and only a little.
     const heart = ctx.atlas.get('ui/heart');
@@ -806,9 +739,14 @@ export class Hud {
       const hx = L.heartLeft + HEART_STEP * (i + 0.5);
       const f = alive ? heart : hollow;
       const c = alive ? C_DANGER : C_DEAD;
-      const beat = alive && i === s.lives - 1 ? 1 + Math.sin(ctx.time * 5) * 0.07 : 1;
+      // Only the last life beats, so only it is left off the pixel grid — a
+      // still heart snapped to whole pixels is crisp, a beating one snapped is
+      // a stair.
+      const beating = alive && i === s.lives - 1;
+      const beat = beating ? 1 + Math.sin(ctx.time * 5) * 0.07 : 1;
       const hw = (HEART_SIZE / f.w) * beat;
-      r.draw(f, hx, L.rowCY, hw, hw, 0, c[0], c[1], c[2], alive ? 1 : 0.55);
+      const px0 = beating ? hx : snapX(r, hx);
+      r.draw(f, px0, rowY, hw, hw, 0, c[0], c[1], c[2], alive ? 1 : 0.55);
     }
   }
 
@@ -821,12 +759,14 @@ export class Hud {
     const press = p > 0.55 ? (p - 0.55) / 0.45 : 0;
     const d = SPK_D * (1 - press * 0.09 + (1 - press) * p * 0.05);
 
-    this.panel(ctx, L.spkCX, L.spkCY + 6, d, d, d / 2, C_DARK, 0.4);
+    // The disc is fully opaque, so only the crescent of shadow that clears its
+    // bottom edge is ever visible.
+    plateShadow(ctx, L.spkCX, L.spkCY, d, d, d / 2, 6, C_DARK, 0.4);
     const body = mix(C_GOLD_DEEP, C_GOLD, 0.25 + p * 0.6);
-    this.panel(ctx, L.spkCX, L.spkCY, d, d, d / 2, body, 1);
+    plate(ctx, L.spkCX, L.spkCY, d, d, d / 2, body, 1);
     // Inner top light: the disc reads as domed rather than flat.
-    this.panel(ctx, L.spkCX, L.spkCY - d * 0.14, d * 0.74, d * 0.42, d * 0.21, C_WHITE, 0.14);
-    this.ring(ctx, L.spkCX, L.spkCY, d, d, d / 2, C_DARK, 0.5);
+    plate(ctx, L.spkCX, L.spkCY - d * 0.14, d * 0.74, d * 0.42, d * 0.21, C_WHITE, 0.14);
+    plateRing(ctx, L.spkCX, L.spkCY, d, d, d / 2, C_DARK, 0.5);
 
     // One button, two jobs: hear the word again and see the clue again. The
     // icon alone only promised the first, so the disc says what it does. When
@@ -854,6 +794,7 @@ export class Hud {
       align: 'center',
       alpha: 0.85,
       tracking: CAPS,
+      snap: true,
     });
   }
 
@@ -910,12 +851,18 @@ export class Hud {
     const h = COMBO_H * (1 + s.comboFlash * 0.06);
     const cx = L.stripR - w / 2;
     const cy = L.comboCY;
+    // Copied out of `mix`'s scratch, which the label below reuses. Into a
+    // module-level triple rather than a fresh array: this runs every frame.
     const accent = mix(C_GOLD, C_WHITE, heat * 0.6);
-    const acc: [number, number, number] = [accent[0], accent[1], accent[2]];
+    ACCENT[0] = accent[0];
+    ACCENT[1] = accent[1];
+    ACCENT[2] = accent[2];
+    const acc = ACCENT;
 
-    this.panel(ctx, cx, cy + 7, w, h, h / 2, C_DARK, 0.4);
-    this.panel(ctx, cx, cy, w, h, h / 2, C_PANEL, 0.99);
-    this.ring(ctx, cx, cy, w, h, h / 2, acc, 0.5 + heat * 0.45);
+    plateShadow(ctx, cx, cy, w, h, h / 2, 7, C_DARK, 0.4);
+    const badgeA = mergeShadow(C_PANEL, 0.99, C_DARK, 0.4, MERGED);
+    plate(ctx, cx, cy, w, h, h / 2, MERGED, badgeA);
+    plateRing(ctx, cx, cy, w, h, h / 2, acc, 0.5 + heat * 0.45);
 
     const numW = measureText(this.comboStr, TYPE.score, 0, TABULAR);
     const x = cx - w / 2 + 26;
@@ -925,6 +872,7 @@ export class Hud {
       mono: TABULAR,
       shadow: shadowFor(TYPE.score),
       shadowAlpha: 0.55,
+      snap: true,
     });
     const label = s.combo >= 10 ? 'RED HOT' : s.combo >= 6 ? 'ON FIRE' : 'COMBO';
     drawText(ctx, label, x + numW + 14, cy + 1, {
@@ -933,6 +881,7 @@ export class Hud {
       alpha: 0.7 + heat * 0.3,
       tracking: CAPS,
       shadow: 2,
+      snap: true,
     });
   }
 
@@ -1005,8 +954,8 @@ export class Hud {
 
     if (a > 0.3) this.markCard(L.cx, cy, w, h);
     this.scrim(ctx, L.cx, cy, w * 1.3, h * 2.6, a * 0.5);
-    this.panel(ctx, L.cx, cy, w, h, HINT_RAD, C_PANEL, a * 0.72);
-    this.ring(ctx, L.cx, cy, w, h, HINT_RAD, C_GOLD, a * 0.5);
+    plate(ctx, L.cx, cy, w, h, HINT_RAD, C_PANEL, a * 0.72);
+    plateRing(ctx, L.cx, cy, w, h, HINT_RAD, C_GOLD, a * 0.5);
 
     if (hasIcon) {
       const icon = ctx.atlas.get('ui/speaker_bold');
@@ -1033,6 +982,7 @@ export class Hud {
         alpha: a,
         shadow: shadowFor(TYPE.label),
         shadowAlpha: 0.7,
+        snap: true,
       });
       ty += lh;
     }
@@ -1072,12 +1022,17 @@ export class Hud {
     const top = cy - h / 2;
     const cx = L.cx;
 
-    this.panel(ctx, cx, cy + 14, w, h, rad, C_DARK, 0.4 * fade);
-    this.panel(ctx, cx, cy, w, h, rad, C_PANEL, 0.95 * fade);
+    // The card is the largest surface in the interface, so its shadow was also
+    // the largest: a full second card, 95% of it behind an opaque one. Only the
+    // lip is drawn; the sliver that used to tint the card's interior is folded
+    // into the card's own colour.
+    plateShadow(ctx, cx, cy, w, h, rad, 14, C_DARK, 0.4 * fade);
+    const cardA = mergeShadow(C_PANEL, 0.95 * fade, C_DARK, 0.4 * fade, MERGED);
+    plate(ctx, cx, cy, w, h, rad, MERGED, cardA);
 
     // Header band: rounded at the top, squared where it meets the body.
     const headH = CLUE_HEAD_H * k;
-    this.panel(ctx, cx, top + headH / 2, w, headH, rad, C_GOLD_DEEP, 0.95 * fade);
+    plate(ctx, cx, top + headH / 2, w, headH, rad, C_GOLD_DEEP, 0.95 * fade);
     r.draw(
       px,
       cx,
@@ -1107,6 +1062,7 @@ export class Hud {
       color: C_DARK,
       alpha: 0.92 * fade,
       tracking: CAPS,
+      snap: true,
     });
 
     let ty = top + headH + lh * 0.62;
@@ -1118,6 +1074,7 @@ export class Hud {
         alpha: fade,
         shadow: 2,
         shadowAlpha: 0.5,
+        snap: true,
       });
       ty += lh * k;
     }
@@ -1138,9 +1095,10 @@ export class Hud {
       align: 'center',
       alpha: 0.7 * fade,
       tracking: 0.26,
+      snap: true,
     });
 
-    this.ring(ctx, cx, cy, w, h, rad, C_GOLD, 0.55 * fade);
+    plateRing(ctx, cx, cy, w, h, rad, C_GOLD, 0.55 * fade);
     if (fade > 0.3) this.markCard(cx, cy, w, h);
   }
 
@@ -1175,9 +1133,10 @@ export class Hud {
 
     if (alpha > 0.3) this.markCard(L.cx, cy, w, h);
     this.scrim(ctx, L.cx, cy, w * 1.5, h * 2.4, 0.55 * alpha);
-    this.panel(ctx, L.cx, cy + 10, w, h, 34, C_DARK, 0.45 * alpha);
-    this.panel(ctx, L.cx, cy, w, h, 34, C_PANEL, 0.97 * alpha);
-    this.ring(ctx, L.cx, cy, w, h, 34, accent, 0.8 * alpha);
+    plateShadow(ctx, L.cx, cy, w, h, 34, 10, C_DARK, 0.45 * alpha);
+    const noticeA = mergeShadow(C_PANEL, 0.97 * alpha, C_DARK, 0.45 * alpha, MERGED);
+    plate(ctx, L.cx, cy, w, h, 34, MERGED, noticeA);
+    plateRing(ctx, L.cx, cy, w, h, 34, accent, 0.8 * alpha);
 
     const headY = hasSub ? cy - 22 : cy;
     drawText(ctx, nt.text, L.cx, headY, {
@@ -1187,6 +1146,7 @@ export class Hud {
       alpha,
       tracking: CAPS,
       shadow: shadowFor(TYPE.head),
+      snap: true,
     });
     if (hasSub) {
       drawText(ctx, nt.sub, L.cx, cy + 30, {
@@ -1196,6 +1156,7 @@ export class Hud {
         alpha: alpha * 0.95,
         tracking: 0.26,
         shadow: 2,
+        snap: true,
       });
     }
   }

@@ -12,6 +12,7 @@
 
 import type { Ctx } from '../core/ctx';
 import { TEXT_EM, TEXT_CELL_H, ADVANCE } from '../art/ui';
+import { snapX, snapY } from './plate';
 
 export interface TextStyle {
   /** Type size in world units (em box; cap height is roughly 0.7 of it). */
@@ -30,6 +31,21 @@ export interface TextStyle {
   shadow?: number;
   shadowAlpha?: number;
   shadowColor?: [number, number, number];
+  /**
+   * Land every glyph on a whole device pixel.
+   *
+   * For screen-space type that holds still — a score, a button label, a line of
+   * clue copy — a glyph cell whose left edge falls at x.5 device pixels is
+   * resampled across two columns and reads as soft, and the softness changes
+   * with the window size because the anchor it hangs off is fractional. Snapping
+   * moves each cell by at most half a pixel, which is well inside the letter
+   * spacing, and the run keeps its measured width because only the draw position
+   * is snapped, never the advance.
+   *
+   * Off by default, and deliberately off for anything that MOVES: quantising a
+   * rising score floater to the pixel grid trades softness for a visible stair.
+   */
+  snap?: boolean;
 }
 
 const WHITE: [number, number, number] = [1, 1, 1];
@@ -71,6 +87,7 @@ export function drawText(ctx: Ctx, str: string, x: number, y: number, style: Tex
     shadow = 0,
     shadowAlpha = 0.5,
     shadowColor = BLACK,
+    snap = false,
   } = style;
 
   const scale = size / TEXT_EM;
@@ -86,15 +103,28 @@ export function drawText(ctx: Ctx, str: string, x: number, y: number, style: Tex
     const dx = isShadow ? shadow : 0;
     const dy = isShadow ? shadow : 0;
     let cx = cursor;
+    const baseline = snap ? snapY(ctx.r, y + dy) : y + dy;
 
     for (let i = 0; i < str.length; i++) {
       const code = str.charCodeAt(i);
       const adv = fixed || (ADVANCE.get(code) ?? TEXT_EM * 0.5) * scale;
       if (code !== 32 && code < 128 && ctx.atlas.has(KEY[code])) {
         const f = ctx.atlas.get(KEY[code]);
+        const gx = cx + adv / 2 + dx;
         // Glyph cells are centred on their advance box, so `y` is the optical
         // centre of a capital — vertical centring needs no extra offset.
-        ctx.r.draw(f, cx + adv / 2 + dx, y + dy, scale, scale, 0, col[0], col[1], col[2], a);
+        ctx.r.draw(
+          f,
+          snap ? snapX(ctx.r, gx) : gx,
+          baseline,
+          scale,
+          scale,
+          0,
+          col[0],
+          col[1],
+          col[2],
+          a,
+        );
       }
       cx += adv + tracking * size;
     }
