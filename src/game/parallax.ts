@@ -668,8 +668,8 @@ export class Parallax {
     // Both sheets live inside the visible range: a sheet whose v band starts
     // above SKY_V0 is projected to a negative screen y and simply never shows.
     this.drifts.length = 0;
-    this.pushDrift(sky, 0.7, 0.86, 1.22, 88, 0.045, 0.22, 0);
-    this.pushDrift(sky, 0.81, 0.97, 1.17, 58, 0.031, 0.16, 2.1);
+    this.pushDrift(sky, 0.7, 0.86, 1.22, 88, 0.01, 0.05, 0);
+    this.pushDrift(sky, 0.81, 0.97, 1.17, 58, 0.007, 0.035, 2.1);
 
     // --- far mountains ----------------------------------------------------
     const mtn = sub(a.get('mountains_far')!, MTN_U0, MTN_U1, 0, 1);
@@ -728,7 +728,7 @@ export class Parallax {
     this.hazeC = HAZE_C;
     this.buildWash(this.haze, 296, 576, 32, (u) =>
       // 0.96 was not haze, it was a bright flat wash over the painting.
-      0.2 * smoothstep(clamp((u - 0.1) / 0.55, 0, 1)),
+      0 * smoothstep(clamp((u - 0.1) / 0.55, 0, 1)),
     );
     this.scrimF = solid(hil, SCRIM_U, SCRIM_V);
     this.buildWash(
@@ -835,7 +835,7 @@ export class Parallax {
       const rise = smoothstep(clamp(u / 0.075, 0, 1));
       const fall = 1 - smoothstep(clamp((u - 0.09) / 0.32, 0, 1));
       // 0.74 blew out the whole band just above the grass line.
-      return 0.16 * rise * fall;
+      return 0 * rise * fall;
     });
     this.duskF = solid(grd, DUSK_U, DUSK_V);
     // ...and everything below that goes into the ground's own shadow. Reaches
@@ -984,20 +984,33 @@ export class Parallax {
   ): FarLayer {
     const h = f.h * scale;
     const tileW = f.w * scale;
-    const bands: Band[] = [];
-    for (let k = 0; k < BANDS; k++) {
-      const va = v0 + ((v1 - v0) * k) / BANDS;
-      const vb = v0 + ((v1 - v0) * (k + 1)) / BANDS;
-      const t = k / (BANDS - 1);
-      bands.push({
-        f: sub(f, 0, 1, va, vb),
-        y: cy + ((va + vb) * 0.5 - 0.5) * h,
-        r: lerp(rTop, rBot, t),
-        g: lerp(gTop, gBot, t),
-        b: lerp(bTop, bBot, t),
-        a: lerp(aTop, aBot, t),
-      });
-    }
+
+    // ONE opaque band per layer.
+    //
+    // This used to slice every layer into eight horizontal strips at partial
+    // alpha, to fake aerial haze by fading a ridge out toward the horizon.
+    // Two things were wrong with that. Partial alpha does not read as haze,
+    // it reads as TRANSPARENCY — clouds and trees were visibly showing
+    // through the mountains standing in front of them. And because each
+    // strip composites separately, and each layer is redrawn once per tile,
+    // a single frame stacked roughly twenty layers of the hills art and
+    // fifty of the tree art over one another, which is what drove the whole
+    // frame hotter and more saturated than the source paintings.
+    //
+    // Distance is a COLOUR, not an opacity. A far layer is drawn solid and
+    // tinted toward the sky: cooler, darker, lower contrast. That is what
+    // aerial perspective actually is, it cannot let the background leak
+    // through a solid object, and it composites exactly once.
+    const bands: Band[] = [
+      {
+        f: sub(f, 0, 1, v0, v1),
+        y: cy + ((v0 + v1) * 0.5 - 0.5) * h,
+        r: (rTop + rBot) * 0.5,
+        g: (gTop + gBot) * 0.5,
+        b: (bTop + bBot) * 0.5,
+        a: 1,
+      },
+    ];
     return { factor, scale, tileW, bands };
   }
 
@@ -1202,8 +1215,8 @@ export class Parallax {
     // made every step visible as a stripe; averaging three taps dithers the
     // staircase away for two sprites and no extra draw call.
     const tap = skySpanH * 0.011;
-    r.draw(sk, cx, skyCy - tap, skySx, skySy, 0, s1[0], s1[1], s1[2], 0.3);
-    r.draw(sk, cx, skyCy + tap, skySx, skySy, 0, s2[0], s2[1], s2[2], 0.3);
+    r.draw(sk, cx, skyCy - tap, skySx, skySy, 0, s1[0], s1[1], s1[2], 0.055);
+    r.draw(sk, cx, skyCy + tap, skySx, skySy, 0, s2[0], s2[1], s2[2], 0.055);
     r.draw(this.skirt!, cx, this.skirtY, spanW / this.skirt!.w, this.skirtSy, 0, s1[0], s1[1], s1[2], 1);
 
     const skyScale = skySpanH / (1 - SKY_V0);

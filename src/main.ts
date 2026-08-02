@@ -158,6 +158,14 @@ async function boot(): Promise<void> {
   setTimeout(() => bootEl?.remove(), 500);
   loop.start();
 
+  // Live grade control, so exposure and saturation can be dialled against the
+  // real frame instead of guessed at: window.__grade(exposure, saturation).
+  (window as any).__grade = (e = 1, sat = 1) => {
+    r.grade[0] = e;
+    r.grade[1] = sat;
+    return `grade exposure=${e} saturation=${sat}`;
+  };
+
   // Expose a handle for the automated capture harness.
   (window as any).__game = {
     ctx,

@@ -53,6 +53,7 @@ in vec2 v_uv;
 in vec4 v_color;
 
 uniform sampler2D u_tex;
+uniform vec2 u_grade;
 
 out vec4 fragColor;
 
@@ -60,7 +61,25 @@ void main() {
   vec4 texel = texture(u_tex, v_uv);
   vec4 c = texel * v_color;
   if (c.a < 0.0025) discard;
-  fragColor = vec4(c.rgb * c.a, c.a); // premultiplied output
+
+  // Global grade, applied per fragment before compositing.
+  //
+  // The backdrop is built by slicing each layer into bands and redrawing it
+  // per tile, so a single frame composites roughly 20 layers of the hills art,
+  // 16 of the ground and 53 of the tree art on top of each other. That
+  // accumulation is what drives the frame hotter and more saturated than the
+  // source paintings, and it cannot be dialled out layer by layer without
+  // destroying the depth banding that needs those passes.
+  //
+  // So it is corrected once, here, at the end: u_grade.x scales exposure and
+  // u_grade.y pulls saturation back toward luma. Both default to 1.0, which is
+  // an exact no-op, and are tunable live via window.__grade(exposure, sat).
+  vec3 g = c.rgb * u_grade.x;
+  float luma = dot(g, vec3(0.2126, 0.7152, 0.0722));
+  g = mix(vec3(luma), g, u_grade.y);
+  g = clamp(g, 0.0, 1.0);
+
+  fragColor = vec4(g * c.a, c.a); // premultiplied output
 }`;
 
 function compile(gl: WebGL2RenderingContext, type: number, src: string): WebGLShader {
@@ -123,6 +142,14 @@ export class Renderer {
   private vao: WebGLVertexArrayObject;
   private instanceVBO: WebGLBuffer;
   private uProj: WebGLUniformLocation;
+  private uGrade: WebGLUniformLocation;
+
+  /**
+   * Global output grade: [exposure, saturation]. 1,1 is an exact no-op.
+   * Tunable live through `window.__grade(e, s)` so it can be dialled against
+   * the real frame instead of guessed at.
+   */
+  grade: [number, number] = [1, 1];
 
   private data: Float32Array;
   private count = 0;
@@ -156,6 +183,7 @@ export class Renderer {
 
     this.prog = link(gl, compile(gl, gl.VERTEX_SHADER, VERT), compile(gl, gl.FRAGMENT_SHADER, FRAG));
     this.uProj = gl.getUniformLocation(this.prog, 'u_proj')!;
+    this.uGrade = gl.getUniformLocation(this.prog, 'u_grade')!;
 
     this.vao = gl.createVertexArray()!;
     gl.bindVertexArray(this.vao);
@@ -360,6 +388,7 @@ export class Renderer {
     p[8] = 0;  p[9] = 0;  p[10] = 1; p[11] = 0;
     p[12] = tx; p[13] = ty; p[14] = 0; p[15] = 1;
     gl.uniformMatrix4fv(this.uProj, false, p);
+    gl.uniform2f(this.uGrade, this.grade[0], this.grade[1]);
 
     this.count = 0;
     this.curTex = null;

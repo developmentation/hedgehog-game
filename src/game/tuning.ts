@@ -96,7 +96,7 @@ export const TUNING = {
      * backdrop and a dark one alike, and a small warm gain on the body itself
      * puts his amber back above the scene.
      */
-    rim: { width: 0.075, alpha: 0.62, r: 0.03, g: 0.022, b: 0.07 },
+    rim: { width: 0.075, alpha: 0, r: 0.03, g: 0.022, b: 0.07 },
     /**
      * Multiplier on the hero's own colour. Higher = hotter, but blows the
      * highlights — and past a point it stops helping, because brightening him

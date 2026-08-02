@@ -245,7 +245,7 @@ const FACE_TILT = 0.21;
  * solid object sits in, and it is the majority of the separation.
  */
 const AURA_STEP = [1.22, 1.46, 1.74, 2.02];
-const AURA_ALPHA = [0.1, 0.07, 0.042, 0.018];
+const AURA_ALPHA = [0, 0, 0, 0];
 
 /**
  * The shade ring: an annular gradient laid around him, outside the aura.
@@ -260,7 +260,7 @@ const AURA_ALPHA = [0.1, 0.07, 0.042, 0.018];
  * ground shadow is already on.
  */
 const HALO_SPAN = [3.5, 5.3];
-const HALO_ALPHA = [0.2, 0.16];
+const HALO_ALPHA = [0, 0];
 /** Aura colour: the sky's own deep indigo, so it reads as shade, not as soot. */
 const AURA_R = 0.045;
 const AURA_G = 0.038;
