@@ -424,7 +424,16 @@ export class Renderer {
       stencil: false,
       premultipliedAlpha: true,
       powerPreference: 'high-performance',
-      desynchronized: true,
+      // `desynchronized: true` OFF.
+      //
+      // It asks the browser to skip the compositor's frame synchronisation to
+      // shave input latency, and on Windows/Chrome that is a documented cause
+      // of visible tearing and flashing: the page can be presented partway
+      // through a frame. It is a latency optimisation, not a correctness one,
+      // and this game is not latency-critical — a spelling game for children
+      // does not need a frame of input lag back at the cost of a frame that
+      // may show torn.
+      desynchronized: false,
       preserveDrawingBuffer: false,
     });
     if (!gl) throw new Error('WebGL2 is required');
