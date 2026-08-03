@@ -452,7 +452,16 @@ export const LEVELS: readonly LevelDef[] = [
     words: { tiers: [2, 3], maxLen: 6 },
     pacing: { startSpeed: 330, endSpeed: 430, rampWords: 4, columnHeight: [2, 3], decoyBias: 0.2 },
     goal: { kind: 'score', target: 2500 },
-    rules: { allowJump: false, lives: 2 },
+    // Jump stays ON here.
+    //
+    // This level shipped with `allowJump: false`, the idea being a pure
+    // spelling-speed challenge with no escape hatch. In play it reads as a
+    // broken game rather than a strict one: the hop is the first thing anyone
+    // tries when a wall is closing, and on this level Space did nothing, the
+    // JUMP button was hidden, and the hint that explains the hop was
+    // suppressed — so the only feedback was losing points to a wall you had no
+    // way to avoid. A rule the player cannot see is not a rule, it is a fault.
+    rules: { lives: 2 },
     theme: 'meadow',
     requires: 'deep-blue',
   },

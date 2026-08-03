@@ -254,6 +254,8 @@ export class PlayScene implements Scene {
   private jumpBtn = new JumpButton();
   /** Raised once per session, the first time a wall arrives that cannot be spelled. */
   private jumpHinted = false;
+  /** Told the player once that this level has no hop. Reset per level. */
+  private jumpDenied = false;
   /**
    * A letter tap made in mid-air, held for `TUNING.jump.airBuffer` and replayed
    * the instant he lands.
@@ -397,6 +399,7 @@ export class PlayScene implements Scene {
     this.scrollSpeed = TUNING.scroll.startSpeed * this.speedMul;
     // A level with no hop has nothing to teach about hopping.
     this.jumpHinted = !cfg.allowJump;
+    this.jumpDenied = false;
 
     // The world, wiped rather than inherited.
     this.distance = 0;
@@ -1042,7 +1045,21 @@ export class PlayScene implements Scene {
   }
 
   private tryJump(ctx: Ctx): void {
-    if (!this.run.config.allowJump) return;
+    // NEVER SWALLOW THE INPUT SILENTLY.
+    //
+    // A level with `allowJump: false` hides the JUMP button and suppresses the
+    // hop tutorial, so pressing Space did nothing at all — no sound, no
+    // movement, no message. That is indistinguishable from a broken control,
+    // and it was reported as exactly that. If a level takes the hop away, it
+    // has to say so the first time the player reaches for it.
+    if (!this.run.config.allowJump) {
+      if (!this.jumpDenied) {
+        this.jumpDenied = true;
+        this.raiseNotice('NO HOPPING HERE', 'SPELL YOUR WAY THROUGH', NOTICE_INFO, 1.8);
+        ctx.audio.play('bounce', 0.22);
+      }
+      return;
+    }
     this.jumpBtn.bump();
     if (!this.canJumpNow()) return;
     if (!this.player.jump(ctx)) return;
