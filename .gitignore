@@ -1,15 +1,23 @@
+# dependencies / build output
 node_modules/
 dist/
+.deploy-stage/
+.verify-extract/
+
+# secrets — OPENAI_API_KEY for tools/genart.mjs lives here, never commit it
 .env
-screenshots/
-captures/
+.env.*
+
+# local captures and raw generations (not part of the shipped game)
+/screenshots/
+/captures/
 art-src/raw/
 art-src/_*.png
 art-src/contact-sheet.png
-dist/
-node_modules/
-*.zip
 
+# third-party reference images kept locally for art direction only
+refs/
+
+# packaged builds
+*.zip
 deploy-game.zip
-.deploy-stage/
-.verify-extract/
