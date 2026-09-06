@@ -81,8 +81,11 @@ const SETS = {
 };
 
 function loadEnv() {
-  const env = {};
-  for (const line of readFileSync(path.join(ROOT, '.env'), 'utf8').split(/\r?\n/)) {
+  // Environment first, then a git-ignored .env next to package.json.
+  const env = { ...process.env };
+  const envPath = path.join(ROOT, '.env');
+  if (!existsSync(envPath)) return env;
+  for (const line of readFileSync(envPath, 'utf8').split(/\r?\n/)) {
     if (!line || line.startsWith('#') || !line.includes('=')) continue;
     const i = line.indexOf('=');
     env[line.slice(0, i).trim()] = line.slice(i + 1).trim().replace(/^["']|["']$/g, '');
@@ -145,7 +148,7 @@ async function main() {
   const force = has('force');
 
   const apiKey = loadEnv().OPENAI_API_KEY;
-  if (!apiKey) throw new Error('OPENAI_API_KEY missing');
+  if (!apiKey) throw new Error('OPENAI_API_KEY missing: set it in the environment or in a git-ignored .env');
 
   await mkdir(RAW_DIR, { recursive: true });
   await mkdir(OUT_DIR, { recursive: true });

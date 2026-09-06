@@ -9,6 +9,25 @@ Aimed at kids as well as adults, so the clue is spoken too, repeats are
 unlimited, and there is no failure state — misses cost momentum and position,
 never the run.
 
+## Play online
+
+**https://developmentation.github.io/hedgehog-game/**
+
+Built and published to GitHub Pages from `main` by
+`.github/workflows/deploy-pages.yml`. Works on desktop and phones; turn the
+sound on, since the word is only ever spoken.
+
+## Screenshots
+
+| | |
+|---|---|
+| ![Title card in the meadow](docs/screenshots/01-title-meadow.png) | ![The hedgehog rolls toward the next letter](docs/screenshots/02-rolling-meadow.png) |
+| Tap to start: the clue is shown and spoken, the word never is | Rolling on after the first correct letter |
+| ![Smashing through the right letter](docs/screenshots/03-smash-meadow.png) | ![Party in the crystal cave](docs/screenshots/04-party-cave.png) |
+| Spin dash into the right block | ASTRONAUT finished in the cave gauntlet |
+| ![Listening to the clue in the winter level](docs/screenshots/05-clue-winter.png) | ![Party on a winter word](docs/screenshots/06-party-winter.png) |
+| Deep Blue: the winter biome | SHARK, with a combo running |
+
 ## Run it
 
 ```
@@ -60,7 +79,8 @@ tools/          art generation, chroma matting, packaging, the two guards
 docs/           perf baseline, theme format, assist features, golden frames
 ```
 
-Art is generated (`tools/genart.mjs`, needs `OPENAI_API_KEY` in `.env`) and
+Art is generated (`tools/genart.mjs`, needs `OPENAI_API_KEY` in the environment or
+in a git-ignored `.env`) and
 keyed out of a flat chroma background by `tools/matte.mjs`. Raws are cached in
 `art-src/raw/`, so re-matting never costs another API call — only prompt changes
 do. `public/art/` holds the matted result and is committed.

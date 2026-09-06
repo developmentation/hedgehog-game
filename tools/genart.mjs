@@ -44,8 +44,12 @@ const ONLY = val('only') ? String(val('only')).split(',').map((s) => s.trim()) :
 const GROUP = val('group');
 
 function loadEnv() {
-  const raw = readFileSync(path.join(ROOT, '.env'), 'utf8');
-  const env = {};
+  // The key comes from the environment, or from a git-ignored .env next to
+  // package.json. It is never read from anywhere that could be committed.
+  const env = { ...process.env };
+  const envPath = path.join(ROOT, '.env');
+  if (!existsSync(envPath)) return env;
+  const raw = readFileSync(envPath, 'utf8');
   for (const line of raw.split(/\r?\n/)) {
     if (!line || line.startsWith('#') || !line.includes('=')) continue;
     const i = line.indexOf('=');
@@ -170,7 +174,7 @@ async function pool(items, n, fn) {
 async function main() {
   const env = loadEnv();
   const apiKey = env.OPENAI_API_KEY;
-  if (!apiKey) throw new Error('OPENAI_API_KEY missing from .env');
+  if (!apiKey) throw new Error('OPENAI_API_KEY missing: set it in the environment or in a git-ignored .env');
 
   await mkdir(RAW_DIR, { recursive: true });
   await mkdir(OUT_DIR, { recursive: true });

@@ -1,0 +1,64 @@
+# Build the game and publish dist/ to GitHub Pages.
+#
+# The build is `tsc --noEmit && vite build` and needs no secrets: the art in
+# public/art/ is committed, and OPENAI_API_KEY is only used by the offline art
+# generation tools, never by the build. `base: './'` in vite.config.ts keeps
+# every URL relative so the bundle works under /hedgehog-game/.
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      # Playwright and sharp are dev tools for the local capture/golden
+      # harness; the Pages build never runs them, so skip their downloads.
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+      SHARP_IGNORE_GLOBAL_LIBVIPS: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
